@@ -68,6 +68,7 @@ EXCLUDE_LIST_LOWER=$(echo "$EXCLUDE_LIST" | tr '[:upper:]' '[:lower:]')
 
 # --- Prerequisite checks -------------------------------------------------------
 
+
 if ! command -v curl &>/dev/null; then
     echo "ERROR: curl not found." >&2
     exit 1
@@ -79,8 +80,18 @@ if ! command -v jq &>/dev/null; then
 fi
 
 AUTH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+
+# If no token in environment, try to extract from git credential helper
 if [[ -z "$AUTH_TOKEN" ]]; then
-    echo "ERROR: No GitHub token found. Set GH_TOKEN or GITHUB_TOKEN." >&2
+    CRED_HELPER=$(git config --get credential.github.com.helper 2>/dev/null | sed "s/^!f() { cat '//; s/'; }; f$//")
+    if [[ -n "$CRED_HELPER" ]] && [[ -f "$CRED_HELPER" ]]; then
+        AUTH_TOKEN=$(grep '^password=' "$CRED_HELPER" 2>/dev/null | cut -d'=' -f2)
+    fi
+fi
+
+if [[ -z "$AUTH_TOKEN" ]]; then
+    echo "ERROR: No GitHub token found." >&2
+    echo "  Tried: GH_TOKEN, GITHUB_TOKEN environment variables, and git credential helper" >&2
     exit 1
 fi
 
