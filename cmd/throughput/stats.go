@@ -8,27 +8,27 @@ import (
 	"strings"
 )
 
-const statsCSVHeader = "test,metric,ona_metric,n,value,p_value,interpretation"
+// --- Metric definitions ---
 
-// statRow represents one row in the stats CSV output.
-type statRow struct {
-	test           string
-	metric         string
-	onaMetric      string
-	n              int
-	value          float64
-	pValue         float64
-	interpretation string
+// metricDef defines how to extract a metric from weekly data.
+type metricDef struct {
+	name    string
+	extract func(ws weekStats) float64
+	valid   func(ws weekStats) bool
 }
 
-// metricPair defines a correlation pair to test.
-type metricPair struct {
-	name   string                    // column name for the dependent variable
-	extract func(ws weekStats) float64 // extracts the metric value from a weekStats
-	valid   func(ws weekStats) bool    // whether this week has valid data for this metric
-}
-
-var metricPairs = []metricPair{
+// allMetrics defines the 6 rows in the consolidated stats CSV.
+var allMetrics = []metricDef{
+	{
+		name:    "prs_merged",
+		extract: func(ws weekStats) float64 { return float64(ws.prsMerged) },
+		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
+	},
+	{
+		name:    "unique_authors",
+		extract: func(ws weekStats) float64 { return float64(ws.uniqueAuthors) },
+		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
+	},
 	{
 		name:    "prs_per_engineer",
 		extract: func(ws weekStats) float64 { return ws.prsPerEngineer },
@@ -44,79 +44,85 @@ var metricPairs = []metricPair{
 		extract: func(ws weekStats) float64 { return ws.pctReverts },
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
 	},
+	{
+		name:    "pct_ona_involved",
+		extract: func(ws weekStats) float64 { return ws.pctOnaInvolved },
+		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
+	},
 }
 
-// generateStats runs all correlation tests and summary calculations, returning
-// the stats CSV content. Returns empty string if insufficient data.
+// Extractor for the Ona attribution variable.
+func extractOna(ws weekStats) float64 { return ws.pctOnaInvolved }
+
+// --- Consolidated stats row ---
+
+type consolidatedRow struct {
+	metric          string
+	n               int
+	firstAvg        float64
+	lastAvg         float64
+	absChange       float64
+	pctChange       string // formatted, or "N/A"
+	window          string
+	r2Ona           string // empty if self-referential
+	pPearsonOna     string
+	pMannWhitneyOna string
+	sigOna          string
+}
+
+const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,window,r2_ona,p_pearson_ona,p_mann_whitney_ona,significance_ona"
+
+// --- Main entry point ---
+
+// generateStats produces the consolidated 6-row stats CSV.
 func generateStats(allStats []weekStats) string {
-	// Filter to weeks with >0 PRs
-	var valid []weekStats
+	// Compute overall average PRs/week (across all non-zero weeks)
+	var totalPRs int
+	var nonZeroCount int
 	for _, ws := range allStats {
 		if ws.prsMerged > 0 {
-			valid = append(valid, ws)
+			totalPRs += ws.prsMerged
+			nonZeroCount++
 		}
+	}
+	if nonZeroCount == 0 {
+		fmt.Fprintf(os.Stderr, "WARNING: No non-empty weeks. Skipping stats.\n")
+		return ""
+	}
+	avgPRs := float64(totalPRs) / float64(nonZeroCount)
+	threshold := avgPRs * 0.10
+
+	// Filter out weeks below 10% of overall average PRs/week
+	var valid []weekStats
+	var excluded int
+	for _, ws := range allStats {
+		if ws.prsMerged > 0 && float64(ws.prsMerged) >= threshold {
+			valid = append(valid, ws)
+		} else if ws.prsMerged > 0 {
+			excluded++
+		}
+	}
+	if excluded > 0 {
+		fmt.Fprintf(os.Stderr, "Stats: excluded %d week(s) below %.0f PRs (10%% of avg %.1f)\n", excluded, threshold, avgPRs)
 	}
 
 	if len(valid) < 4 {
-		fmt.Fprintf(os.Stderr, "WARNING: Only %d non-empty weeks — need at least 4 for stats. Skipping.\n", len(valid))
+		fmt.Fprintf(os.Stderr, "WARNING: Only %d weeks after filtering — need at least 4 for stats. Skipping.\n", len(valid))
 		return ""
 	}
 
-	// Extract Ona values (independent variable for all tests)
-	onaValues := make([]float64, len(valid))
+	// Extract Ona values (independent variable)
+	onaVals := make([]float64, len(valid))
 	for i, ws := range valid {
-		onaValues[i] = ws.pctOnaInvolved
+		onaVals[i] = extractOna(ws)
 	}
 
-	var rows []statRow
+	var rows []consolidatedRow
 
-	// For each metric pair, run Pearson and Mann-Whitney
-	for _, mp := range metricPairs {
-		// Collect paired data (ona, metric) for weeks where this metric is valid
-		var onaX, metricY []float64
-		for _, ws := range valid {
-			if mp.valid(ws) {
-				onaX = append(onaX, ws.pctOnaInvolved)
-				metricY = append(metricY, mp.extract(ws))
-			}
-		}
-
-		n := len(onaX)
-		if n < 4 {
-			fmt.Fprintf(os.Stderr, "WARNING: Only %d valid weeks for %s — skipping.\n", n, mp.name)
-			continue
-		}
-
-		// Pearson correlation
-		r, pValuePearson := pearsonCorrelation(onaX, metricY)
-		rows = append(rows, statRow{
-			test:           "pearson",
-			metric:         mp.name,
-			onaMetric:      "pct_ona_involved",
-			n:              n,
-			value:          r,
-			pValue:         pValuePearson,
-			interpretation: interpretPValue(pValuePearson),
-		})
-
-		// Mann-Whitney U
-		uStat, pValueMW, ok := mannWhitneyU(onaX, metricY)
-		if ok {
-			rows = append(rows, statRow{
-				test:           "mann_whitney_u",
-				metric:         mp.name,
-				onaMetric:      "pct_ona_involved",
-				n:              n,
-				value:          uStat,
-				pValue:         pValueMW,
-				interpretation: interpretPValue(pValueMW),
-			})
-		}
-
-		// Summary row
-		summaryRow := computeSummary(mp, valid, r, pValuePearson)
-		if summaryRow != nil {
-			rows = append(rows, *summaryRow)
+	for _, md := range allMetrics {
+		row := buildRow(md, valid, onaVals)
+		if row != nil {
+			rows = append(rows, *row)
 		}
 	}
 
@@ -126,89 +132,115 @@ func generateStats(allStats []weekStats) string {
 
 	// Build CSV
 	var sb strings.Builder
-	sb.WriteString(statsCSVHeader)
+	sb.WriteString(consolidatedHeader)
 	sb.WriteByte('\n')
-	for _, row := range rows {
-		// Quote interpretation field since summary rows contain commas
-		interp := row.interpretation
-		if strings.ContainsAny(interp, ",\"") {
-			interp = "\"" + strings.ReplaceAll(interp, "\"", "\"\"") + "\""
-		}
-		fmt.Fprintf(&sb, "%s,%s,%s,%d,%.2f,%.6f,%s\n",
-			row.test, row.metric, row.onaMetric, row.n,
-			row.value, row.pValue, interp)
+	for _, r := range rows {
+		fmt.Fprintf(&sb, "%s,%d,%s,%s,%s,%s,%s,%s,%s,%s,%s\n",
+			r.metric, r.n,
+			r.fmtFirstAvg(), r.fmtLastAvg(), r.fmtAbsChange(), r.pctChange, r.window,
+			r.r2Ona, r.pPearsonOna, r.pMannWhitneyOna,
+			r.sigOna)
 	}
 	return sb.String()
 }
 
-// computeSummary computes the first-5%-vs-last-5% trend and builds a summary row.
-func computeSummary(mp metricPair, valid []weekStats, pearsonR, pearsonP float64) *statRow {
-	// Collect metric values in chronological order for valid weeks
-	var values []float64
-	for _, ws := range valid {
-		if mp.valid(ws) {
-			values = append(values, mp.extract(ws))
-		}
-	}
+func (r *consolidatedRow) fmtFirstAvg() string  { return fmt.Sprintf("%.2f", r.firstAvg) }
+func (r *consolidatedRow) fmtLastAvg() string   { return fmt.Sprintf("%.2f", r.lastAvg) }
+func (r *consolidatedRow) fmtAbsChange() string { return fmt.Sprintf("%.2f", r.absChange) }
 
-	n := len(values)
-	if n < 2 {
+// buildRow constructs one consolidated row for a metric.
+func buildRow(md metricDef, valid []weekStats, onaVals []float64) *consolidatedRow {
+	// Trend
+	firstAvg, lastAvg, n, winSize, ok := trendWindow(valid, md)
+	if !ok {
 		return nil
 	}
 
-	// Window size: floor(n * 0.05), min 1
+	absChange := lastAvg - firstAvg
+	var pctChange string
+	if firstAvg != 0 {
+		pct := (absChange / math.Abs(firstAvg)) * 100
+		sign := "+"
+		if pct < 0 {
+			sign = ""
+		}
+		pctChange = fmt.Sprintf("%s%.1f%%", sign, pct)
+	} else {
+		pctChange = "N/A"
+	}
+	window := fmt.Sprintf("first %dw vs last %dw avg", winSize, winSize)
+
+	// Extract metric values aligned with valid weeks
+	metricVals := make([]float64, 0, len(valid))
+	onaAligned := make([]float64, 0, len(valid))
+	for i, ws := range valid {
+		if md.valid(ws) {
+			metricVals = append(metricVals, md.extract(ws))
+			onaAligned = append(onaAligned, onaVals[i])
+		}
+	}
+
+	row := &consolidatedRow{
+		metric:    md.name,
+		n:         n,
+		firstAvg:  firstAvg,
+		lastAvg:   lastAvg,
+		absChange: absChange,
+		pctChange: pctChange,
+		window:    window,
+	}
+
+	// Ona correlation (skip if metric IS pct_ona_involved)
+	if md.name != "pct_ona_involved" && len(metricVals) >= 4 {
+		r, pPearson := pearsonCorrelation(onaAligned, metricVals)
+		_, pMW, mwOK := mannWhitneyU(onaAligned, metricVals)
+		row.r2Ona = fmt.Sprintf("%.4f", r*r)
+		row.pPearsonOna = fmt.Sprintf("%.6f", pPearson)
+		if mwOK {
+			row.pMannWhitneyOna = fmt.Sprintf("%.6f", pMW)
+		}
+		row.sigOna = interpretPValue(pPearson)
+	}
+
+	return row
+}
+
+// --- Trend windowing ---
+
+// trendWindow computes the first-5%-vs-last-5% averages for a metric.
+func trendWindow(weeks []weekStats, md metricDef) (float64, float64, int, int, bool) {
+	var values []float64
+	for _, ws := range weeks {
+		if md.valid(ws) {
+			values = append(values, md.extract(ws))
+		}
+	}
+	n := len(values)
+	if n < 2 {
+		return 0, 0, n, 0, false
+	}
+
 	windowSize := int(math.Floor(float64(n) * 0.05))
 	if windowSize < 1 {
 		windowSize = 1
 	}
 
-	// First window average
 	var firstSum float64
 	for i := 0; i < windowSize; i++ {
 		firstSum += values[i]
 	}
 	firstAvg := firstSum / float64(windowSize)
 
-	// Last window average
 	var lastSum float64
 	for i := n - windowSize; i < n; i++ {
 		lastSum += values[i]
 	}
 	lastAvg := lastSum / float64(windowSize)
 
-	absChange := lastAvg - firstAvg
-	rSquared := pearsonR * pearsonR
-	sig := interpretPValue(pearsonP)
-
-	// Build interpretation string
-	var interp string
-	if firstAvg != 0 {
-		pctChange := (absChange / math.Abs(firstAvg)) * 100
-		sign := "+"
-		if pctChange < 0 {
-			sign = ""
-		}
-		interp = fmt.Sprintf("%s%.1f%% change (r²=%.2f, p=%.6f, %s)",
-			sign, pctChange, rSquared, pearsonP, sig)
-	} else {
-		sign := "+"
-		if absChange < 0 {
-			sign = ""
-		}
-		interp = fmt.Sprintf("%s%.2f absolute change (r²=%.2f, p=%.6f, %s)",
-			sign, absChange, rSquared, pearsonP, sig)
-	}
-
-	return &statRow{
-		test:           "summary",
-		metric:         mp.name,
-		onaMetric:      "pct_ona_involved",
-		n:              n,
-		value:          absChange,
-		pValue:         pearsonP,
-		interpretation: interp,
-	}
+	return firstAvg, lastAvg, n, windowSize, true
 }
+
+// --- Significance interpretation ---
 
 func interpretPValue(p float64) string {
 	if p < 0.05 {
@@ -222,15 +254,12 @@ func interpretPValue(p float64) string {
 
 // --- Pearson correlation ---
 
-// pearsonCorrelation computes Pearson r and two-tailed p-value.
-// Returns (0, 1.0) if variance is zero.
 func pearsonCorrelation(x, y []float64) (float64, float64) {
 	n := len(x)
 	if n < 3 {
 		return 0, 1.0
 	}
 
-	// Means
 	var sumX, sumY float64
 	for i := 0; i < n; i++ {
 		sumX += x[i]
@@ -239,7 +268,6 @@ func pearsonCorrelation(x, y []float64) (float64, float64) {
 	meanX := sumX / float64(n)
 	meanY := sumY / float64(n)
 
-	// Covariance and standard deviations
 	var cov, varX, varY float64
 	for i := 0; i < n; i++ {
 		dx := x[i] - meanX
@@ -254,8 +282,6 @@ func pearsonCorrelation(x, y []float64) (float64, float64) {
 	}
 
 	r := cov / math.Sqrt(varX*varY)
-
-	// Clamp r to [-1, 1] for numerical safety
 	if r > 1 {
 		r = 1
 	}
@@ -263,11 +289,8 @@ func pearsonCorrelation(x, y []float64) (float64, float64) {
 		r = -1
 	}
 
-	// t-statistic: t = r * sqrt((n-2) / (1-r²))
 	df := float64(n - 2)
 	t := r * math.Sqrt(df/(1-r*r))
-
-	// Two-tailed p-value from t-distribution
 	p := 2 * tDistCDF(-math.Abs(t), df)
 
 	return r, p
@@ -275,28 +298,25 @@ func pearsonCorrelation(x, y []float64) (float64, float64) {
 
 // --- Mann-Whitney U test ---
 
-// mannWhitneyU splits weeks into high/low Ona groups by median pct_ona_involved,
-// then compares the metric distributions. Returns (U, p-value, ok).
-// ok is false if groups can't be formed (e.g., all Ona values identical).
-func mannWhitneyU(onaValues, metricValues []float64) (float64, float64, bool) {
-	n := len(onaValues)
+// mannWhitneyU splits by median of the first array (grouping variable),
+// compares distributions of the second array. Returns (U, p-value, ok).
+func mannWhitneyU(groupVals, metricVals []float64) (float64, float64, bool) {
+	n := len(groupVals)
 	if n < 4 {
 		return 0, 1.0, false
 	}
 
-	// Find median of Ona values
-	onaSorted := make([]float64, n)
-	copy(onaSorted, onaValues)
-	sort.Float64s(onaSorted)
-	onaMedian := percentile(onaSorted, 50)
+	sorted := make([]float64, n)
+	copy(sorted, groupVals)
+	sort.Float64s(sorted)
+	med := percentile(sorted, 50)
 
-	// Split into two groups
 	var highGroup, lowGroup []float64
 	for i := 0; i < n; i++ {
-		if onaValues[i] > onaMedian {
-			highGroup = append(highGroup, metricValues[i])
+		if groupVals[i] > med {
+			highGroup = append(highGroup, metricVals[i])
 		} else {
-			lowGroup = append(lowGroup, metricValues[i])
+			lowGroup = append(lowGroup, metricVals[i])
 		}
 	}
 
@@ -304,7 +324,6 @@ func mannWhitneyU(onaValues, metricValues []float64) (float64, float64, bool) {
 	n2 := len(highGroup)
 
 	if n1 == 0 || n2 == 0 {
-		// Can't split — all values on one side of median
 		return 0, 1.0, false
 	}
 
@@ -312,8 +331,6 @@ func mannWhitneyU(onaValues, metricValues []float64) (float64, float64, bool) {
 		fmt.Fprintf(os.Stderr, "NOTE: Mann-Whitney groups are small (n1=%d, n2=%d). Normal approximation may be imprecise.\n", n1, n2)
 	}
 
-	// Compute U statistic
-	// U = number of times a low-group value precedes a high-group value
 	var u float64
 	for _, v1 := range lowGroup {
 		for _, v2 := range highGroup {
@@ -325,7 +342,6 @@ func mannWhitneyU(onaValues, metricValues []float64) (float64, float64, bool) {
 		}
 	}
 
-	// Normal approximation for p-value
 	meanU := float64(n1*n2) / 2.0
 	sigmaU := math.Sqrt(float64(n1*n2*(n1+n2+1)) / 12.0)
 
@@ -334,22 +350,17 @@ func mannWhitneyU(onaValues, metricValues []float64) (float64, float64, bool) {
 	}
 
 	z := (u - meanU) / sigmaU
-	// Two-tailed p-value
 	p := 2 * normalCDF(-math.Abs(z))
 
 	return u, p, true
 }
 
-// --- Distribution functions (pure Go, no external deps) ---
+// --- Distribution functions ---
 
-// normalCDF computes the cumulative distribution function of the standard normal
-// distribution using the Abramowitz and Stegun approximation.
 func normalCDF(x float64) float64 {
 	return 0.5 * math.Erfc(-x/math.Sqrt2)
 }
 
-// tDistCDF computes the CDF of the Student's t-distribution with df degrees of
-// freedom, using the regularized incomplete beta function.
 func tDistCDF(t float64, df float64) float64 {
 	if df <= 0 {
 		return 0.5
@@ -362,8 +373,6 @@ func tDistCDF(t float64, df float64) float64 {
 	return 0.5 * beta
 }
 
-// regIncBeta computes the regularized incomplete beta function I_x(a, b)
-// using a continued fraction expansion (Lentz's method).
 func regIncBeta(a, b, x float64) float64 {
 	if x < 0 || x > 1 {
 		return 0
@@ -375,16 +384,13 @@ func regIncBeta(a, b, x float64) float64 {
 		return 1
 	}
 
-	// Use the symmetry relation if x > (a+1)/(a+b+2) for better convergence
 	if x > (a+1)/(a+b+2) {
 		return 1.0 - regIncBeta(b, a, 1.0-x)
 	}
 
-	// Log of the beta function prefix: x^a * (1-x)^b / (a * B(a,b))
 	lnPrefix := a*math.Log(x) + b*math.Log(1-x) -
 		math.Log(a) - lnBeta(a, b)
 
-	// Continued fraction (Lentz's method)
 	const maxIter = 200
 	const epsilon = 1e-14
 	const tiny = 1e-30
@@ -400,11 +406,9 @@ func regIncBeta(a, b, x float64) float64 {
 		} else {
 			m := float64(i)
 			if i%2 == 0 {
-				// Even term
 				k := m / 2.0
 				an = (k * (b - k) * x) / ((a + 2*k - 1) * (a + 2*k))
 			} else {
-				// Odd term
 				k := (m - 1) / 2.0
 				an = -((a + k) * (a + b + k) * x) / ((a + 2*k) * (a + 2*k + 1))
 			}
@@ -432,7 +436,6 @@ func regIncBeta(a, b, x float64) float64 {
 	return math.Exp(lnPrefix) * f
 }
 
-// lnBeta computes ln(B(a, b)) = lnGamma(a) + lnGamma(b) - lnGamma(a+b).
 func lnBeta(a, b float64) float64 {
 	la, _ := math.Lgamma(a)
 	lb, _ := math.Lgamma(b)
