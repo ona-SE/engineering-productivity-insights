@@ -28,7 +28,16 @@ func main() {
 	output := flag.String("output", "", "output CSV file (default: stdout)")
 	exclude := flag.String("exclude", "", "additional usernames to exclude (comma-separated)")
 	statsOutput := flag.String("stats-output", "", "output CSV file for statistical analysis (optional)")
+	htmlOutput := flag.String("html", "", "output HTML file with interactive chart (optional)")
+	serve := flag.Bool("serve", false, "start a local server to view the HTML chart (implies --html)")
+	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
 	flag.Parse()
+
+	// --serve implies --html with a default filename
+	if *serve && *htmlOutput == "" {
+		defaultHTML := "chart.html"
+		htmlOutput = &defaultHTML
+	}
 
 	cfg := config{
 		branch: *branch,
@@ -98,10 +107,11 @@ func main() {
 		fmt.Print(csv)
 	}
 
-	// Statistical analysis (optional)
+	// Statistical analysis (always compute if we have enough data, for HTML summary)
+	fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
+	statsCSV, statsRows := generateStats(allWeekStats)
+
 	if *statsOutput != "" {
-		fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
-		statsCSV := generateStats(allWeekStats)
 		if statsCSV != "" {
 			if err := os.WriteFile(*statsOutput, []byte(statsCSV), 0644); err != nil {
 				fatal("Failed to write stats output: %v", err)
@@ -112,7 +122,26 @@ func main() {
 		}
 	}
 
+	// HTML visualization (optional)
+	if *htmlOutput != "" {
+		fmt.Fprintf(os.Stderr, "Generating HTML chart...\n")
+		title := fmt.Sprintf("%s/%s — %s to %s", cfg.owner, cfg.repo, startDate, today)
+		htmlContent, err := generateHTML(title, weekRanges, allWeekStats, statsRows)
+		if err != nil {
+			fatal("Failed to generate HTML: %v", err)
+		}
+		if err := os.WriteFile(*htmlOutput, []byte(htmlContent), 0644); err != nil {
+			fatal("Failed to write HTML output: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "HTML chart written to %s\n", *htmlOutput)
+	}
+
 	fmt.Fprintf(os.Stderr, "Done.\n")
+
+	// Start local server (blocks forever)
+	if *serve {
+		serveHTML(*htmlOutput, *servePort)
+	}
 }
 
 func parseRepo(s string) (string, string) {

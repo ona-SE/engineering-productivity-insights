@@ -75,7 +75,8 @@ const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,wi
 // --- Main entry point ---
 
 // generateStats produces the consolidated 6-row stats CSV.
-func generateStats(allStats []weekStats) string {
+// It returns both the CSV string and the parsed rows for use by the HTML generator.
+func generateStats(allStats []weekStats) (string, []consolidatedRow) {
 	// Compute overall average PRs/week (across all non-zero weeks)
 	var totalPRs int
 	var nonZeroCount int
@@ -87,7 +88,7 @@ func generateStats(allStats []weekStats) string {
 	}
 	if nonZeroCount == 0 {
 		fmt.Fprintf(os.Stderr, "WARNING: No non-empty weeks. Skipping stats.\n")
-		return ""
+		return "", nil
 	}
 	avgPRs := float64(totalPRs) / float64(nonZeroCount)
 	threshold := avgPRs * 0.10
@@ -108,7 +109,7 @@ func generateStats(allStats []weekStats) string {
 
 	if len(valid) < 4 {
 		fmt.Fprintf(os.Stderr, "WARNING: Only %d weeks after filtering — need at least 4 for stats. Skipping.\n", len(valid))
-		return ""
+		return "", nil
 	}
 
 	// Extract Ona values (independent variable)
@@ -127,7 +128,7 @@ func generateStats(allStats []weekStats) string {
 	}
 
 	if len(rows) == 0 {
-		return ""
+		return "", nil
 	}
 
 	// Build CSV
@@ -141,7 +142,7 @@ func generateStats(allStats []weekStats) string {
 			r.r2Ona, r.pPearsonOna, r.pMannWhitneyOna,
 			r.sigOna)
 	}
-	return sb.String()
+	return sb.String(), rows
 }
 
 func (r *consolidatedRow) fmtFirstAvg() string  { return fmt.Sprintf("%.2f", r.firstAvg) }
