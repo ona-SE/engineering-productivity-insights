@@ -35,6 +35,7 @@ go run ./cmd/throughput/ [flags]
 | `--port` | `8080` | Port for the local server (used with `--serve`) |
 | `--min-prs` | `0` | Exclude weeks with fewer than N merged PRs (e.g. holiday weeks) |
 | `--exclude-bottom-contributor-pct` | `0` | Exclude bottom N% of contributors by total PR count (0-99) |
+| `--stats-window-pct` | `5` | Percentage of weeks for before/after comparison window (1-49) |
 
 ### Examples
 

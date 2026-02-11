@@ -77,7 +77,7 @@ const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,wi
 
 // generateStats produces the consolidated 6-row stats CSV.
 // It returns both the CSV string and the parsed rows for use by the HTML generator.
-func generateStats(allStats []weekStats) (string, []consolidatedRow) {
+func generateStats(allStats []weekStats, windowPct int) (string, []consolidatedRow) {
 	// Compute overall average PRs/week (across all non-zero weeks)
 	var totalPRs int
 	var nonZeroCount int
@@ -122,7 +122,7 @@ func generateStats(allStats []weekStats) (string, []consolidatedRow) {
 	var rows []consolidatedRow
 
 	for _, md := range allMetrics {
-		row := buildRow(md, valid, onaVals)
+		row := buildRow(md, valid, onaVals, windowPct)
 		if row != nil {
 			rows = append(rows, *row)
 		}
@@ -151,9 +151,9 @@ func (r *consolidatedRow) fmtLastAvg() string   { return fmt.Sprintf("%.2f", r.l
 func (r *consolidatedRow) fmtAbsChange() string { return fmt.Sprintf("%.2f", r.absChange) }
 
 // buildRow constructs one consolidated row for a metric.
-func buildRow(md metricDef, valid []weekStats, onaVals []float64) *consolidatedRow {
+func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int) *consolidatedRow {
 	// Trend
-	firstAvg, lastAvg, n, winSize, ok := trendWindow(valid, md)
+	firstAvg, lastAvg, n, winSize, ok := trendWindow(valid, md, windowPct)
 	if !ok {
 		return nil
 	}
@@ -210,8 +210,8 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64) *consolidatedR
 
 // --- Trend windowing ---
 
-// trendWindow computes the first-5%-vs-last-5% averages for a metric.
-func trendWindow(weeks []weekStats, md metricDef) (float64, float64, int, int, bool) {
+// trendWindow computes the first-N%-vs-last-N% averages for a metric.
+func trendWindow(weeks []weekStats, md metricDef, windowPct int) (float64, float64, int, int, bool) {
 	var values []float64
 	for _, ws := range weeks {
 		if md.valid(ws) {
@@ -223,7 +223,7 @@ func trendWindow(weeks []weekStats, md metricDef) (float64, float64, int, int, b
 		return 0, 0, n, 0, false
 	}
 
-	windowSize := int(math.Floor(float64(n) * 0.05))
+	windowSize := int(math.Floor(float64(n) * float64(windowPct) / 100.0))
 	if windowSize < 1 {
 		windowSize = 1
 	}

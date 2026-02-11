@@ -34,6 +34,7 @@ func main() {
 	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
 	minPRs := flag.Int("min-prs", 0, "exclude weeks with fewer than N merged PRs (e.g. holiday weeks)")
 	excludeBottomPct := flag.Int("exclude-bottom-contributor-pct", 0, "exclude bottom N% of contributors by total PR count (0-99)")
+	statsWindowPct := flag.Int("stats-window-pct", 5, "percentage of weeks for before/after comparison window (1-49, default 5)")
 	flag.Parse()
 
 	// --serve implies --html with a default filename
@@ -203,7 +204,7 @@ func main() {
 
 	// Statistical analysis (always compute if we have enough data, for HTML summary)
 	fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
-	statsCSV, statsRows := generateStats(allWeekStats)
+	statsCSV, statsRows := generateStats(allWeekStats, *statsWindowPct)
 
 	if *statsOutput != "" {
 		if statsCSV != "" {
