@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -32,6 +33,7 @@ func main() {
 	serve := flag.Bool("serve", false, "start a local server to view the HTML chart (implies --html)")
 	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
 	minPRs := flag.Int("min-prs", 0, "exclude weeks with fewer than N merged PRs (e.g. holiday weeks)")
+	excludeBottomPct := flag.Int("exclude-bottom-contributor-pct", 0, "exclude bottom N% of contributors by total PR count (0-99)")
 	flag.Parse()
 
 	// --serve implies --html with a default filename
@@ -94,6 +96,64 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Processing PRs...\n")
 	filtered := filterPRs(allPRs, cfg.excludeSet)
 	fmt.Fprintf(os.Stderr, "Processed: %d PRs (%d excluded)\n", len(filtered), len(allPRs)-len(filtered))
+
+	// Exclude bottom N% of contributors by total PR count
+	if *excludeBottomPct > 0 && *excludeBottomPct < 100 {
+		// Count PRs per author
+		authorCounts := make(map[string]int)
+		for _, pr := range filtered {
+			authorCounts[pr.authorLogin]++
+		}
+
+		// Sort authors by PR count ascending
+		type authorEntry struct {
+			login string
+			count int
+		}
+		authors := make([]authorEntry, 0, len(authorCounts))
+		for login, count := range authorCounts {
+			authors = append(authors, authorEntry{login, count})
+		}
+		sort.Slice(authors, func(i, j int) bool {
+			return authors[i].count < authors[j].count
+		})
+
+		// Compute cutoff: bottom N% of authors by headcount
+		cutoffIdx := len(authors) * *excludeBottomPct / 100
+		if cutoffIdx > 0 {
+			excludeSet := make(map[string]bool)
+			for i := 0; i < cutoffIdx; i++ {
+				excludeSet[authors[i].login] = true
+			}
+			// Also exclude anyone tied with the last excluded author
+			thresholdCount := authors[cutoffIdx-1].count
+			for i := cutoffIdx; i < len(authors); i++ {
+				if authors[i].count <= thresholdCount {
+					excludeSet[authors[i].login] = true
+				} else {
+					break
+				}
+			}
+
+			// Log excluded authors
+			var excluded []string
+			for i := 0; i < len(authors) && excludeSet[authors[i].login]; i++ {
+				excluded = append(excluded, fmt.Sprintf("%s (%d)", authors[i].login, authors[i].count))
+			}
+			fmt.Fprintf(os.Stderr, "Excluded %d bottom contributors (<=%d PRs): %s\n",
+				len(excludeSet), thresholdCount, strings.Join(excluded, ", "))
+
+			// Filter PRs
+			var kept []enrichedPR
+			for _, pr := range filtered {
+				if !excludeSet[pr.authorLogin] {
+					kept = append(kept, pr)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "After contributor filter: %d PRs (%d removed)\n", len(kept), len(filtered)-len(kept))
+			filtered = kept
+		}
+	}
 
 	// Aggregate and output CSV
 	fmt.Fprintf(os.Stderr, "Aggregating by week...\n")

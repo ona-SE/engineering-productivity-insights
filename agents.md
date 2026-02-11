@@ -29,7 +29,7 @@ To run with the interactive chart visualization:
 
 All Go source lives in `cmd/throughput/`:
 
-- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`.
+- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`, `--exclude-bottom-contributor-pct`.
 - `token.go` — Resolves GitHub token from env vars or git credential helper.
 - `graphql.go` — GraphQL HTTP client with retry (3 attempts, backoff) and rate-limit handling.
 - `fetch.go` — Concurrent PR fetching. Uses a bounded goroutine pool (10 workers). Each worker fetches one week's PRs with pagination.
@@ -47,6 +47,7 @@ All Go source lives in `cmd/throughput/`:
 - **Bot detection**: Uses the GraphQL `__typename` field. PRs from authors with `__typename == "Bot"` are excluded.
 - **Default exclusions**: Hardcoded in `main.go` as `defaultExclude` (`dependabot[bot],renovate[bot]`). Additional exclusions come from the `--exclude` flag.
 - **Min-PRs filtering**: `--min-prs` drops low-activity weeks (e.g. holidays) from CSV, stats, and chart output after aggregation.
+- **Bottom contributor exclusion**: `--exclude-bottom-contributor-pct N` ranks all authors by total PR count across the full time range, excludes the bottom N% by headcount (ties at the boundary included), and drops their PRs entirely before aggregation.
 - **HTML visualization**: Chart.js loaded from CDN, data embedded inline as JSON. The `--serve` flag injects a live-reload script via SSE. File watcher polls every 500ms using modtime + size + FNV-1a content hash.
 - **Stats window**: Compares first 5% vs last 5% of valid weeks (min 1 week per side). The `windowSize` is stored on `consolidatedRow` so the HTML can display actual date ranges.
 - **Quarterly averages**: Splits weeks into 4 equal groups (not calendar quarters). Last group absorbs remainder.
