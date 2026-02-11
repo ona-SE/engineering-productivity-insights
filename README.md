@@ -34,6 +34,7 @@ go run ./cmd/throughput/ [flags]
 | `--serve` | `false` | Start a local server to view the chart (implies `--html chart.html`) |
 | `--port` | `8080` | Port for the local server (used with `--serve`) |
 | `--min-prs` | `0` | Exclude weeks with fewer than N merged PRs (e.g. holiday weeks) |
+| `--exclude-bottom-contributor-pct` | `0` | Exclude bottom N% of contributors by total PR count (0-99) |
 
 ### Examples
 
@@ -43,6 +44,9 @@ go run ./cmd/throughput/
 
 # 52-week analysis with chart, excluding holiday weeks
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --serve
+
+# Exclude bottom 25% of contributors by PR count
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --exclude-bottom-contributor-pct 25 --serve
 
 # CSV + HTML + stats all at once
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 26 \
