@@ -135,20 +135,27 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		"pct_ona_involved":       "%",
 	}
 
-	// Compute window description from the first summary row's windowSize
+	// Compute window description from the first summary row
 	if len(summaryRows) > 0 && len(weeks) > 0 {
-		ws := summaryRows[0].windowSize
+		r := summaryRows[0]
 		n := len(weeks)
-		if ws < 1 {
-			ws = 1
+		if r.firstWindowSize != r.lastWindowSize {
+			// Threshold-based split — use the window string directly
+			data.WindowDesc = "Comparing " + r.window
+		} else {
+			// Positional window — show date ranges
+			ws := r.windowSize
+			if ws < 1 {
+				ws = 1
+			}
+			firstStart := weeks[0].start
+			firstEnd := weeks[ws-1].end
+			lastStart := weeks[n-ws].start
+			lastEnd := weeks[n-1].end
+			data.WindowDesc = fmt.Sprintf("Comparing first %d week(s) (%s – %s) vs last %d week(s) (%s – %s)",
+				ws, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
+				ws, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
 		}
-		firstStart := weeks[0].start
-		firstEnd := weeks[ws-1].end
-		lastStart := weeks[n-ws].start
-		lastEnd := weeks[n-1].end
-		data.WindowDesc = fmt.Sprintf("Comparing first %d week(s) (%s – %s) vs last %d week(s) (%s – %s)",
-			ws, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
-			ws, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
 	}
 
 	for _, r := range summaryRows {

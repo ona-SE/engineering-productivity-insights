@@ -59,7 +59,9 @@ func extractOna(ws weekStats) float64 { return ws.pctOnaInvolved }
 type consolidatedRow struct {
 	metric          string
 	n               int
-	windowSize      int
+	windowSize      int // for positional windows (same on both sides)
+	firstWindowSize int // for threshold windows (may differ)
+	lastWindowSize  int
 	firstAvg        float64
 	lastAvg         float64
 	absChange       float64
@@ -77,7 +79,7 @@ const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,wi
 
 // generateStats produces the consolidated 6-row stats CSV.
 // It returns both the CSV string and the parsed rows for use by the HTML generator.
-func generateStats(allStats []weekStats, windowPct int) (string, []consolidatedRow) {
+func generateStats(allStats []weekStats, windowPct int, onaThreshold float64) (string, []consolidatedRow) {
 	// Compute overall average PRs/week (across all non-zero weeks)
 	var totalPRs int
 	var nonZeroCount int
@@ -122,7 +124,7 @@ func generateStats(allStats []weekStats, windowPct int) (string, []consolidatedR
 	var rows []consolidatedRow
 
 	for _, md := range allMetrics {
-		row := buildRow(md, valid, onaVals, windowPct)
+		row := buildRow(md, valid, onaVals, windowPct, onaThreshold)
 		if row != nil {
 			rows = append(rows, *row)
 		}
@@ -151,11 +153,27 @@ func (r *consolidatedRow) fmtLastAvg() string   { return fmt.Sprintf("%.2f", r.l
 func (r *consolidatedRow) fmtAbsChange() string { return fmt.Sprintf("%.2f", r.absChange) }
 
 // buildRow constructs one consolidated row for a metric.
-func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int) *consolidatedRow {
-	// Trend
-	firstAvg, lastAvg, n, winSize, ok := trendWindow(valid, md, windowPct)
-	if !ok {
-		return nil
+func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int, onaThreshold float64) *consolidatedRow {
+	var firstAvg, lastAvg float64
+	var n, firstWinSize, lastWinSize int
+	var window string
+	var ok bool
+
+	if onaThreshold > 0 {
+		firstAvg, lastAvg, n, firstWinSize, lastWinSize, ok = thresholdWindow(valid, md, onaThreshold)
+		if !ok {
+			return nil
+		}
+		window = fmt.Sprintf("below %.0f%% Ona (%dw) vs above %.0f%% Ona (%dw)", onaThreshold, firstWinSize, onaThreshold, lastWinSize)
+	} else {
+		var winSize int
+		firstAvg, lastAvg, n, winSize, ok = trendWindow(valid, md, windowPct)
+		if !ok {
+			return nil
+		}
+		firstWinSize = winSize
+		lastWinSize = winSize
+		window = fmt.Sprintf("first %dw vs last %dw avg", winSize, winSize)
 	}
 
 	absChange := lastAvg - firstAvg
@@ -170,7 +188,6 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int)
 	} else {
 		pctChange = "N/A"
 	}
-	window := fmt.Sprintf("first %dw vs last %dw avg", winSize, winSize)
 
 	// Extract metric values aligned with valid weeks
 	metricVals := make([]float64, 0, len(valid))
@@ -183,14 +200,16 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int)
 	}
 
 	row := &consolidatedRow{
-		metric:     md.name,
-		windowSize: winSize,
-		n:         n,
-		firstAvg:  firstAvg,
-		lastAvg:   lastAvg,
-		absChange: absChange,
-		pctChange: pctChange,
-		window:    window,
+		metric:          md.name,
+		windowSize:      firstWinSize,
+		firstWindowSize: firstWinSize,
+		lastWindowSize:  lastWinSize,
+		n:               n,
+		firstAvg:        firstAvg,
+		lastAvg:         lastAvg,
+		absChange:       absChange,
+		pctChange:       pctChange,
+		window:          window,
 	}
 
 	// Ona correlation (skip if metric IS pct_ona_involved)
@@ -241,6 +260,38 @@ func trendWindow(weeks []weekStats, md metricDef, windowPct int) (float64, float
 	lastAvg := lastSum / float64(windowSize)
 
 	return firstAvg, lastAvg, n, windowSize, true
+}
+
+// thresholdWindow splits weeks by Ona usage threshold and computes averages for each group.
+func thresholdWindow(weeks []weekStats, md metricDef, threshold float64) (float64, float64, int, int, int, bool) {
+	var belowVals, aboveVals []float64
+	for _, ws := range weeks {
+		if !md.valid(ws) {
+			continue
+		}
+		v := md.extract(ws)
+		if ws.pctOnaInvolved < threshold {
+			belowVals = append(belowVals, v)
+		} else {
+			aboveVals = append(aboveVals, v)
+		}
+	}
+	if len(belowVals) == 0 || len(aboveVals) == 0 {
+		return 0, 0, 0, 0, 0, false
+	}
+
+	var belowSum float64
+	for _, v := range belowVals {
+		belowSum += v
+	}
+	var aboveSum float64
+	for _, v := range aboveVals {
+		aboveSum += v
+	}
+
+	n := len(belowVals) + len(aboveVals)
+	return belowSum / float64(len(belowVals)), aboveSum / float64(len(aboveVals)),
+		n, len(belowVals), len(aboveVals), true
 }
 
 // --- Significance interpretation ---
