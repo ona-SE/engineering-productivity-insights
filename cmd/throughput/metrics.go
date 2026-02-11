@@ -8,6 +8,7 @@ import (
 )
 
 var onaCoauthorRe = regexp.MustCompile(`(?i)Co-authored-by:.*[Oo]na.*@ona\.com`)
+var revertRe = regexp.MustCompile(`(?i)\b(revert|reverting|rollback|roll\s+back|rolled\s+back)\b`)
 
 // enrichedPR holds a PR with computed metrics.
 type enrichedPR struct {
@@ -19,6 +20,7 @@ type enrichedPR struct {
 	changedFiles      int
 	number            int
 	onaCoauthored     bool
+	isRevert          bool
 }
 
 // filterPRs filters out bots and excluded users, computes metrics.
@@ -78,6 +80,8 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			}
 		}
 
+		isRevert := revertRe.MatchString(pr.Title)
+
 		result = append(result, enrichedPR{
 			mergedEpoch:      mergedEpoch,
 			cycleTimeHours:   cycleHours,
@@ -87,6 +91,7 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			changedFiles:     pr.ChangedFiles,
 			number:           pr.Number,
 			onaCoauthored:    onaCoauthored,
+			isRevert:         isRevert,
 		})
 	}
 

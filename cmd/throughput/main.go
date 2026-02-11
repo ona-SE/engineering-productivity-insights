@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const defaultExclude = "ona-automations,ona-gha-automations[bot],dependabot[bot],renovate[bot]"
+const defaultExclude = "dependabot[bot],renovate[bot]"
 
 type config struct {
 	owner      string

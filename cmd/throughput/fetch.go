@@ -12,6 +12,7 @@ import (
 // PR represents a pull request from the GraphQL response.
 type PR struct {
 	Number       int       `json:"number"`
+	Title        string    `json:"title"`
 	CreatedAt    time.Time `json:"createdAt"`
 	MergedAt     time.Time `json:"mergedAt"`
 	Additions    int       `json:"additions"`
@@ -109,6 +110,7 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 				nodes {
 					... on PullRequest {
 						number
+						title
 						createdAt
 						mergedAt
 						additions

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const csvHeader = "week_start,week_end,prs_merged,total_additions,total_deletions,total_files_changed,median_cycle_time_hours,p90_cycle_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_coauthored"
+const csvHeader = "week_start,week_end,prs_merged,total_additions,total_deletions,total_files_changed,median_cycle_time_hours,p90_cycle_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_coauthored,revert_count,pct_reverts"
 
 // aggregateCSV buckets PRs into weeks and produces CSV output.
 func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
@@ -30,8 +30,9 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 		additions  int
 		deletions  int
 		files      int
-		onaCount   int
-		cycleTimes []float64
+		onaCount    int
+		revertCount int
+		cycleTimes  []float64
 		reviewTimes []float64
 	}
 	buckets := make([]weekBucket, len(weeks))
@@ -45,6 +46,9 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 				buckets[i].files += pr.changedFiles
 				if pr.onaCoauthored {
 					buckets[i].onaCount++
+				}
+				if pr.isRevert {
+					buckets[i].revertCount++
 				}
 				if pr.cycleTimeHours >= 0 {
 					buckets[i].cycleTimes = append(buckets[i].cycleTimes, pr.cycleTimeHours)
@@ -74,17 +78,21 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 
 		var avgSize string
 		var pctOna string
+		var pctReverts string
 		if b.count > 0 {
 			avgSize = fmt.Sprintf("%.2f", float64(b.additions+b.deletions)/float64(b.count))
 			pctOna = fmt.Sprintf("%.1f", float64(b.onaCount)/float64(b.count)*100)
+			pctReverts = fmt.Sprintf("%.1f", float64(b.revertCount)/float64(b.count)*100)
 		} else {
 			avgSize = "0.00"
 			pctOna = "0.0"
+			pctReverts = "0.0"
 		}
 
-		fmt.Fprintf(&sb, "%s,%s,%d,%d,%d,%d,%s,%s,%s,%s,%s,%s\n",
+		fmt.Fprintf(&sb, "%s,%s,%d,%d,%d,%d,%s,%s,%s,%s,%s,%s,%d,%s\n",
 			ws, we, b.count, b.additions, b.deletions, b.files,
-			medCycle, p90Cycle, medReview, p90Review, avgSize, pctOna)
+			medCycle, p90Cycle, medReview, p90Review, avgSize, pctOna,
+			b.revertCount, pctReverts)
 	}
 
 	return sb.String()
