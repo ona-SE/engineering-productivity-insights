@@ -1,0 +1,10 @@
+test,metric,ona_metric,n,value,p_value,interpretation
+pearson,prs_per_engineer,pct_ona_involved,51,0.07,0.624771,not_significant
+mann_whitney_u,prs_per_engineer,pct_ona_involved,51,300.00,0.637601,not_significant
+summary,prs_per_engineer,pct_ona_involved,51,2.13,0.624771,"+29.9% change (r²=0.00, p=0.624771, not_significant)"
+pearson,median_cycle_time_hours,pct_ona_involved,51,0.41,0.002735,significant
+mann_whitney_u,median_cycle_time_hours,pct_ona_involved,51,492.00,0.001652,significant
+summary,median_cycle_time_hours,pct_ona_involved,51,-3.14,0.002735,"-42.4% change (r²=0.17, p=0.002735, significant)"
+pearson,pct_reverts,pct_ona_involved,51,-0.02,0.893917,not_significant
+mann_whitney_u,pct_reverts,pct_ona_involved,51,332.50,0.887620,not_significant
+summary,pct_reverts,pct_ona_involved,51,-0.13,0.893917,"-11.8% change (r²=0.00, p=0.893917, not_significant)"

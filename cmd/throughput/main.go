@@ -27,6 +27,7 @@ func main() {
 	weeks := flag.Int("weeks", 12, "number of weeks to analyze")
 	output := flag.String("output", "", "output CSV file (default: stdout)")
 	exclude := flag.String("exclude", "", "additional usernames to exclude (comma-separated)")
+	statsOutput := flag.String("stats-output", "", "output CSV file for statistical analysis (optional)")
 	flag.Parse()
 
 	cfg := config{
@@ -86,7 +87,7 @@ func main() {
 
 	// Aggregate and output CSV
 	fmt.Fprintf(os.Stderr, "Aggregating by week...\n")
-	csv := aggregateCSV(filtered, weekRanges)
+	csv, allWeekStats := aggregateCSV(filtered, weekRanges)
 
 	if cfg.output != "" {
 		if err := os.WriteFile(cfg.output, []byte(csv), 0644); err != nil {
@@ -96,6 +97,21 @@ func main() {
 	} else {
 		fmt.Print(csv)
 	}
+
+	// Statistical analysis (optional)
+	if *statsOutput != "" {
+		fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
+		statsCSV := generateStats(allWeekStats)
+		if statsCSV != "" {
+			if err := os.WriteFile(*statsOutput, []byte(statsCSV), 0644); err != nil {
+				fatal("Failed to write stats output: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "Stats CSV written to %s\n", *statsOutput)
+		} else {
+			fmt.Fprintf(os.Stderr, "No stats generated (insufficient data).\n")
+		}
+	}
+
 	fmt.Fprintf(os.Stderr, "Done.\n")
 }
 

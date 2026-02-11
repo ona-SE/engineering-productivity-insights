@@ -19,7 +19,8 @@ type enrichedPR struct {
 	deletions         int
 	changedFiles      int
 	number            int
-	onaCoauthored     bool
+	authorLogin       string
+	onaInvolved       bool
 	isRevert          bool
 }
 
@@ -71,12 +72,14 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			}
 		}
 
-		// Ona co-authorship: check all commit messages
-		onaCoauthored := false
-		for _, cn := range pr.Commits.Nodes {
-			if onaCoauthorRe.MatchString(cn.Commit.Message) {
-				onaCoauthored = true
-				break
+		// Ona involvement: co-authored OR primary author (login prefix "ona-")
+		onaInvolved := strings.HasPrefix(login, "ona-")
+		if !onaInvolved {
+			for _, cn := range pr.Commits.Nodes {
+				if onaCoauthorRe.MatchString(cn.Commit.Message) {
+					onaInvolved = true
+					break
+				}
 			}
 		}
 
@@ -90,7 +93,8 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			deletions:        pr.Deletions,
 			changedFiles:     pr.ChangedFiles,
 			number:           pr.Number,
-			onaCoauthored:    onaCoauthored,
+			authorLogin:      login,
+			onaInvolved:      onaInvolved,
 			isRevert:         isRevert,
 		})
 	}

@@ -6,10 +6,21 @@ import (
 	"time"
 )
 
-const csvHeader = "week_start,week_end,prs_merged,total_additions,total_deletions,total_files_changed,median_cycle_time_hours,p90_cycle_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_coauthored,revert_count,pct_reverts"
+const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_cycle_time_hours,p90_cycle_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
+
+// weekStats holds the computed per-week values needed by the stats analysis.
+type weekStats struct {
+	prsMerged          int
+	uniqueAuthors      int
+	prsPerEngineer     float64
+	medianCycleTime    float64 // -1 if no data
+	pctOnaInvolved     float64
+	pctReverts         float64
+}
 
 // aggregateCSV buckets PRs into weeks and produces CSV output.
-func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
+// It also returns per-week stats for use by the statistical analysis.
+func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 	// Precompute week epoch boundaries
 	type weekBounds struct {
 		startEpoch int64
@@ -26,16 +37,20 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 
 	// Bucket PRs into weeks
 	type weekBucket struct {
-		count      int
-		additions  int
-		deletions  int
-		files      int
+		count       int
+		additions   int
+		deletions   int
+		files       int
 		onaCount    int
 		revertCount int
 		cycleTimes  []float64
 		reviewTimes []float64
+		authors     map[string]bool
 	}
 	buckets := make([]weekBucket, len(weeks))
+	for i := range buckets {
+		buckets[i].authors = make(map[string]bool)
+	}
 
 	for _, pr := range prs {
 		for i := range weeks {
@@ -44,7 +59,8 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 				buckets[i].additions += pr.additions
 				buckets[i].deletions += pr.deletions
 				buckets[i].files += pr.changedFiles
-				if pr.onaCoauthored {
+				buckets[i].authors[pr.authorLogin] = true
+				if pr.onaInvolved {
 					buckets[i].onaCount++
 				}
 				if pr.isRevert {
@@ -61,15 +77,23 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 		}
 	}
 
-	// Build CSV
+	// Build CSV and collect stats
 	var sb strings.Builder
 	sb.WriteString(csvHeader)
 	sb.WriteByte('\n')
+
+	allStats := make([]weekStats, len(weeks))
 
 	for i, wr := range weeks {
 		b := buckets[i]
 		ws := wr.start.Format("2006-01-02")
 		we := wr.end.Format("2006-01-02")
+
+		uniqueAuthors := len(b.authors)
+		var prsPerEng float64
+		if uniqueAuthors > 0 {
+			prsPerEng = float64(b.count) / float64(uniqueAuthors)
+		}
 
 		medCycle := formatPercentile(median(b.cycleTimes))
 		p90Cycle := formatPercentile(p90(b.cycleTimes))
@@ -77,25 +101,33 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) string {
 		p90Review := formatPercentile(p90(b.reviewTimes))
 
 		var avgSize string
-		var pctOna string
-		var pctReverts string
+		var pctOna float64
+		var pctReverts float64
 		if b.count > 0 {
 			avgSize = fmt.Sprintf("%.2f", float64(b.additions+b.deletions)/float64(b.count))
-			pctOna = fmt.Sprintf("%.1f", float64(b.onaCount)/float64(b.count)*100)
-			pctReverts = fmt.Sprintf("%.1f", float64(b.revertCount)/float64(b.count)*100)
+			pctOna = float64(b.onaCount) / float64(b.count) * 100
+			pctReverts = float64(b.revertCount) / float64(b.count) * 100
 		} else {
 			avgSize = "0.00"
-			pctOna = "0.0"
-			pctReverts = "0.0"
 		}
 
-		fmt.Fprintf(&sb, "%s,%s,%d,%d,%d,%d,%s,%s,%s,%s,%s,%s,%d,%s\n",
-			ws, we, b.count, b.additions, b.deletions, b.files,
+		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
+			ws, we, b.count, uniqueAuthors, prsPerEng,
+			b.additions, b.deletions, b.files,
 			medCycle, p90Cycle, medReview, p90Review, avgSize, pctOna,
 			b.revertCount, pctReverts)
+
+		allStats[i] = weekStats{
+			prsMerged:       b.count,
+			uniqueAuthors:   uniqueAuthors,
+			prsPerEngineer:  prsPerEng,
+			medianCycleTime: median(b.cycleTimes),
+			pctOnaInvolved:  pctOna,
+			pctReverts:      pctReverts,
+		}
 	}
 
-	return sb.String()
+	return sb.String(), allStats
 }
 
 // formatPercentile formats a percentile value, returning empty string for no data.
