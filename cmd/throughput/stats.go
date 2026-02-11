@@ -59,6 +59,7 @@ func extractOna(ws weekStats) float64 { return ws.pctOnaInvolved }
 type consolidatedRow struct {
 	metric          string
 	n               int
+	windowSize      int
 	firstAvg        float64
 	lastAvg         float64
 	absChange       float64
@@ -182,7 +183,8 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64) *consolidatedR
 	}
 
 	row := &consolidatedRow{
-		metric:    md.name,
+		metric:     md.name,
+		windowSize: winSize,
 		n:         n,
 		firstAvg:  firstAvg,
 		lastAvg:   lastAvg,

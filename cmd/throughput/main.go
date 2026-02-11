@@ -31,6 +31,7 @@ func main() {
 	htmlOutput := flag.String("html", "", "output HTML file with interactive chart (optional)")
 	serve := flag.Bool("serve", false, "start a local server to view the HTML chart (implies --html)")
 	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
+	minPRs := flag.Int("min-prs", 0, "exclude weeks with fewer than N merged PRs (e.g. holiday weeks)")
 	flag.Parse()
 
 	// --serve implies --html with a default filename
@@ -97,6 +98,39 @@ func main() {
 	// Aggregate and output CSV
 	fmt.Fprintf(os.Stderr, "Aggregating by week...\n")
 	csv, allWeekStats := aggregateCSV(filtered, weekRanges)
+
+	// Filter out low-activity weeks (e.g. holidays)
+	if *minPRs > 0 {
+		var filteredRanges []weekRange
+		var filteredStats []weekStats
+		var filteredCSVLines []string
+		csvLines := strings.Split(csv, "\n")
+		// Keep header
+		if len(csvLines) > 0 {
+			filteredCSVLines = append(filteredCSVLines, csvLines[0])
+		}
+		var dropped int
+		for i, ws := range allWeekStats {
+			if ws.prsMerged >= *minPRs {
+				filteredRanges = append(filteredRanges, weekRanges[i])
+				filteredStats = append(filteredStats, ws)
+				if i+1 < len(csvLines) {
+					filteredCSVLines = append(filteredCSVLines, csvLines[i+1])
+				}
+			} else {
+				dropped++
+			}
+		}
+		if dropped > 0 {
+			fmt.Fprintf(os.Stderr, "Excluded %d week(s) with fewer than %d PRs\n", dropped, *minPRs)
+		}
+		weekRanges = filteredRanges
+		allWeekStats = filteredStats
+		csv = strings.Join(filteredCSVLines, "\n")
+		if !strings.HasSuffix(csv, "\n") {
+			csv += "\n"
+		}
+	}
 
 	if cfg.output != "" {
 		if err := os.WriteFile(cfg.output, []byte(csv), 0644); err != nil {
