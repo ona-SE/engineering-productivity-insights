@@ -9,27 +9,17 @@
 # Auth: GH_TOKEN or GITHUB_TOKEN environment variable
 #
 # Usage:
-#   ./throughput.sh                              # CSV to stdout
+#   ./throughput.sh                              # CSV to stdout (uses current repo)
+#   ./throughput.sh --repo owner/repo            # analyze a different repo
 #   ./throughput.sh --output report.csv          # CSV to file
 #   ./throughput.sh --exclude "user1,user2"      # additional usernames to exclude
+#   ./throughput.sh --branch develop             # target branch (default: main)
+#   ./throughput.sh --weeks 52                   # number of weeks to analyze (default: 12)
 
 set -euo pipefail
 
-# Detect owner/repo from the git remote of the current directory
-REMOTE_URL=$(git remote get-url origin 2>/dev/null) || {
-    echo "ERROR: Not in a git repository or no 'origin' remote found." >&2
-    exit 1
-}
-# Parse owner/repo from HTTPS or SSH URLs
-OWNER_REPO=$(echo "$REMOTE_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)##; s#\.git$##')
-OWNER=$(echo "$OWNER_REPO" | cut -d'/' -f1)
-REPO=$(echo "$OWNER_REPO" | cut -d'/' -f2)
-
-if [[ -z "$OWNER" || -z "$REPO" ]]; then
-    echo "ERROR: Could not parse owner/repo from remote URL: $REMOTE_URL" >&2
-    exit 1
-fi
-
+EXPLICIT_REPO=""
+BASE_BRANCH="main"
 WEEKS=12
 DEFAULT_EXCLUDE="ona-automations,ona-gha-automations[bot],dependabot[bot],renovate[bot]"
 API_BASE="https://api.github.com"
@@ -49,8 +39,20 @@ while [[ $# -gt 0 ]]; do
             EXTRA_EXCLUDE="$2"
             shift 2
             ;;
+        --repo)
+            EXPLICIT_REPO="$2"
+            shift 2
+            ;;
+        --branch)
+            BASE_BRANCH="$2"
+            shift 2
+            ;;
+        --weeks)
+            WEEKS="$2"
+            shift 2
+            ;;
         --help|-h)
-            echo "Usage: $0 [--output FILE] [--exclude user1,user2]" >&2
+            echo "Usage: $0 [--repo owner/repo] [--branch BRANCH] [--weeks N] [--output FILE] [--exclude user1,user2]" >&2
             exit 0
             ;;
         *)
@@ -59,6 +61,32 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# --- Resolve owner/repo ---------------------------------------------------------
+
+if [[ -n "$EXPLICIT_REPO" ]]; then
+    # Parse owner/repo from explicit argument (accepts "owner/repo" or full GitHub URL)
+    OWNER_REPO=$(echo "$EXPLICIT_REPO" | sed -E 's#https?://github\.com/##; s#\.git$##; s#/$##; s#/tree/.*$##')
+    OWNER=$(echo "$OWNER_REPO" | cut -d'/' -f1)
+    REPO=$(echo "$OWNER_REPO" | cut -d'/' -f2)
+else
+    # Detect owner/repo from the git remote of the current directory
+    REMOTE_URL=$(git remote get-url origin 2>/dev/null) || {
+        echo "ERROR: Not in a git repository or no 'origin' remote found." >&2
+        echo "  Use --repo owner/repo to specify a repository explicitly." >&2
+        exit 1
+    }
+    OWNER_REPO=$(echo "$REMOTE_URL" | sed -E 's#(https?://[^/]+/|git@[^:]+:)##; s#\.git$##')
+    OWNER=$(echo "$OWNER_REPO" | cut -d'/' -f1)
+    REPO=$(echo "$OWNER_REPO" | cut -d'/' -f2)
+fi
+
+if [[ -z "$OWNER" || -z "$REPO" ]]; then
+    echo "ERROR: Could not parse owner/repo from: ${EXPLICIT_REPO:-$REMOTE_URL}" >&2
+    exit 1
+fi
+
+echo "Repository: ${OWNER}/${REPO} (branch: ${BASE_BRANCH})" >&2
 
 EXCLUDE_LIST="${DEFAULT_EXCLUDE}"
 if [[ -n "$EXTRA_EXCLUDE" ]]; then
@@ -172,7 +200,7 @@ for (( w=0; w<WEEKS; w++ )); do
             AFTER_CLAUSE=", after: \"$CURSOR\""
         fi
 
-        GQL_QUERY=$(jq -n --arg search "repo:${OWNER}/${REPO} is:pr is:merged base:main merged:${RANGE_START}..${RANGE_END}" \
+        GQL_QUERY=$(jq -n --arg search "repo:${OWNER}/${REPO} is:pr is:merged base:${BASE_BRANCH} merged:${RANGE_START}..${RANGE_END}" \
             --arg after_clause "$AFTER_CLAUSE" \
             '{query: ("query { search(query: " + ($search | tojson) + ", type: ISSUE, first: 100" + $after_clause + ") { pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { number createdAt mergedAt additions deletions changedFiles author { login ... on Bot { __typename } ... on User { __typename } } commits(first: 50) { nodes { commit { authoredDate message } } } reviews(first: 1) { nodes { submittedAt } } } } } }")}')
 
@@ -207,80 +235,39 @@ echo "Total PRs fetched: $TOTAL_FETCHED" >&2
 
 echo "Processing PRs..." >&2
 
-FILTERED_COUNT=0
-EXCLUDED_COUNT=0
+# Single jq pass over all PRs for performance (avoids per-PR subprocess overhead)
+jq -r --arg exclude_list "$EXCLUDE_LIST_LOWER" '
+    ($exclude_list | split(",")) as $excludes |
+    (.author.__typename // "User") as $atype |
+    (.author.login // "" | ascii_downcase) as $login |
+    if $atype == "Bot" then empty
+    elif ($excludes | any(. == $login)) then empty
+    elif (.mergedAt // "") == "" then empty
+    else
+        def parse_ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdate;
+        (.mergedAt | parse_ts) as $merged_epoch |
+        (.createdAt | parse_ts) as $created_epoch |
+        (.commits.nodes[0].commit.authoredDate // null) as $first_commit |
+        (if $first_commit != null then
+            ($first_commit | parse_ts) as $fc_epoch |
+            if $merged_epoch >= $fc_epoch then
+                (($merged_epoch - $fc_epoch) / 3600 * 100 | round / 100 | tostring)
+            else "" end
+        else "" end) as $cycle_hours |
+        (.reviews.nodes[0].submittedAt // null) as $first_review |
+        (if $first_review != null then
+            ($first_review | parse_ts) as $rev_epoch |
+            if $rev_epoch >= $created_epoch then
+                (($rev_epoch - $created_epoch) / 3600 * 100 | round / 100 | tostring)
+            else "" end
+        else "" end) as $review_hours |
+        ([.commits.nodes[].commit.message] | any(test("Co-authored-by:.*[Oo]na.*@ona\\.com"; "i"))) as $ona |
+        "\($merged_epoch)|\($cycle_hours)|\($review_hours)|\(.additions // 0)|\(.deletions // 0)|\(.changedFiles // 0)|\(.number)|\(if $ona then 1 else 0 end)"
+    end
+' "$ALL_PRS_FILE" > "$ENRICHED_DATA"
 
-while IFS= read -r pr_json; do
-    # Extract author info
-    login=$(echo "$pr_json" | jq -r '.author.login // ""' 2>/dev/null)
-    author_type=$(echo "$pr_json" | jq -r '.author.__typename // "User"' 2>/dev/null)
-
-    # Exclude bots by type
-    if [[ "$author_type" == "Bot" ]]; then
-        EXCLUDED_COUNT=$((EXCLUDED_COUNT + 1))
-        continue
-    fi
-
-    # Exclude by username list
-    login_lower=$(echo "$login" | tr '[:upper:]' '[:lower:]')
-    skip=false
-    IFS=',' read -ra items <<< "$EXCLUDE_LIST_LOWER"
-    for item in "${items[@]}"; do
-        if [[ "$login_lower" == "$item" ]]; then
-            skip=true
-            break
-        fi
-    done
-    if [[ "$skip" == "true" ]]; then
-        EXCLUDED_COUNT=$((EXCLUDED_COUNT + 1))
-        continue
-    fi
-
-    # Extract data
-    MERGED_AT=$(echo "$pr_json" | jq -r '.mergedAt // empty' 2>/dev/null)
-    [[ -z "$MERGED_AT" ]] && continue
-
-    CREATED_AT=$(echo "$pr_json" | jq -r '.createdAt' 2>/dev/null)
-    ADDITIONS=$(echo "$pr_json" | jq -r '.additions // 0' 2>/dev/null)
-    DELETIONS=$(echo "$pr_json" | jq -r '.deletions // 0' 2>/dev/null)
-    CHANGED_FILES=$(echo "$pr_json" | jq -r '.changedFiles // 0' 2>/dev/null)
-    PR_NUMBER=$(echo "$pr_json" | jq -r '.number' 2>/dev/null)
-
-    MERGED_EPOCH=$(date -d "$MERGED_AT" +%s 2>/dev/null) || continue
-
-    # First commit authored date
-    FIRST_COMMIT_DATE=$(echo "$pr_json" | jq -r '.commits.nodes[0].commit.authoredDate // empty' 2>/dev/null)
-    CYCLE_HOURS=""
-    if [[ -n "$FIRST_COMMIT_DATE" ]]; then
-        FIRST_COMMIT_EPOCH=$(date -d "$FIRST_COMMIT_DATE" +%s 2>/dev/null) || FIRST_COMMIT_EPOCH=""
-        if [[ -n "$FIRST_COMMIT_EPOCH" ]] && [[ "$MERGED_EPOCH" -ge "$FIRST_COMMIT_EPOCH" ]]; then
-            CYCLE_HOURS=$(awk "BEGIN {printf \"%.2f\", ($MERGED_EPOCH - $FIRST_COMMIT_EPOCH) / 3600}")
-        fi
-    fi
-
-    # Ona co-authorship: check if any commit message contains the trailer
-    ONA_COAUTHORED=0
-    HAS_ONA=$(echo "$pr_json" | jq -r '[.commits.nodes[].commit.message] | any(test("Co-authored-by:.*[Oo]na.*@ona\\.com"; "i"))' 2>/dev/null)
-    if [[ "$HAS_ONA" == "true" ]]; then
-        ONA_COAUTHORED=1
-    fi
-
-    # First review submitted_at
-    FIRST_REVIEW_AT=$(echo "$pr_json" | jq -r '.reviews.nodes[0].submittedAt // empty' 2>/dev/null)
-    REVIEW_HOURS=""
-    if [[ -n "$FIRST_REVIEW_AT" ]]; then
-        CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null) || CREATED_EPOCH=""
-        REVIEW_EPOCH=$(date -d "$FIRST_REVIEW_AT" +%s 2>/dev/null) || REVIEW_EPOCH=""
-        if [[ -n "$CREATED_EPOCH" ]] && [[ -n "$REVIEW_EPOCH" ]] && [[ "$REVIEW_EPOCH" -ge "$CREATED_EPOCH" ]]; then
-            REVIEW_HOURS=$(awk "BEGIN {printf \"%.2f\", ($REVIEW_EPOCH - $CREATED_EPOCH) / 3600}")
-        fi
-    fi
-
-    echo "${MERGED_EPOCH}|${CYCLE_HOURS}|${REVIEW_HOURS}|${ADDITIONS}|${DELETIONS}|${CHANGED_FILES}|${PR_NUMBER}|${ONA_COAUTHORED}" >> "$ENRICHED_DATA"
-    FILTERED_COUNT=$((FILTERED_COUNT + 1))
-
-done < "$ALL_PRS_FILE"
-
+FILTERED_COUNT=$(wc -l < "$ENRICHED_DATA")
+EXCLUDED_COUNT=$((TOTAL_FETCHED - FILTERED_COUNT))
 echo "Processed: $FILTERED_COUNT PRs ($EXCLUDED_COUNT excluded)" >&2
 
 # --- Bucketing and aggregation --------------------------------------------------
