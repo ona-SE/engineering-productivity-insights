@@ -1,16 +1,18 @@
 # Engineering Insights
 
-Week-over-week PR throughput metrics for any GitHub repository. Fetches merged PRs via the GitHub GraphQL API and produces a CSV with cycle time, review turnaround, PR size, and Ona co-authorship stats.
+Week-over-week PR throughput metrics for any GitHub repository. Fetches merged PRs via the GitHub GraphQL API and produces a CSV with cycle time, review turnaround, PR size, revert tracking, and Ona co-authorship stats. Includes a built-in interactive chart visualization.
 
 Fetches all weeks concurrently -- a 52-week analysis completes in ~1-2 minutes.
 
 ## Quick start
 
 ```sh
-go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 12 --output productivity-analysis-output.csv
-```
+# CSV output
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 12 --output report.csv
 
-That's it. No build step needed. Results are saved to `output.csv`.
+# Interactive chart with live reload
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --serve
+```
 
 ## Usage
 
@@ -27,58 +29,48 @@ go run ./cmd/throughput/ [flags]
 | `--weeks` | `12` | Number of weeks to analyze |
 | `--output` | stdout | Write CSV to a file instead of stdout |
 | `--exclude` | — | Additional usernames to exclude (comma-separated) |
+| `--stats-output` | — | Write statistical analysis CSV to a file |
+| `--html` | — | Write interactive HTML chart to a file |
+| `--serve` | `false` | Start a local server to view the chart (implies `--html chart.html`) |
+| `--port` | `8080` | Port for the local server (used with `--serve`) |
+| `--min-prs` | `0` | Exclude weeks with fewer than N merged PRs (e.g. holiday weeks) |
 
 ### Examples
 
-**Analyze the current repo (auto-detects from git remote):**
-
 ```sh
+# Auto-detect repo from git remote, output CSV to stdout
 go run ./cmd/throughput/
-```
 
-**Analyze a specific repo for the last 52 weeks:**
+# 52-week analysis with chart, excluding holiday weeks
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --serve
 
-```sh
-go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52
-```
+# CSV + HTML + stats all at once
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 26 \
+  --output report.csv --html chart.html --stats-output stats.csv
 
-**Write output to a file:**
-
-```sh
-go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 12 --output report.csv
-```
-
-**Target a different branch:**
-
-```sh
-go run ./cmd/throughput/ --repo myorg/myrepo --branch develop --weeks 8
-```
-
-**Exclude additional users:**
-
-```sh
+# Exclude additional users
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --exclude "staging-bot,test-user"
-```
-
-**Combine flags:**
-
-```sh
-go run ./cmd/throughput/ \
-  --repo gitpod-io/gitpod-next \
-  --branch main \
-  --weeks 26 \
-  --exclude "staging-bot" \
-  --output half-year-report.csv
 ```
 
 ### Building a binary (optional)
 
-If you prefer a compiled binary:
-
 ```sh
 go build ./cmd/throughput/
-./throughput --repo gitpod-io/gitpod-next --weeks 12
+./throughput --repo gitpod-io/gitpod-next --weeks 12 --serve
 ```
+
+## Visualization
+
+When using `--serve` or `--html`, the tool generates a self-contained HTML file with:
+
+- **Summary stat cards** showing before/after comparison with percentage change (first 5% vs last 5% of weeks)
+- **Quarterly averages table** splitting the time range into 4 equal periods
+- **Dual-axis line chart** with:
+  - Left axis: PRs merged
+  - Right axis 1: % Ona involved, % reverts (0-100%)
+  - Right axis 2: PRs per engineer, median cycle time (hrs)
+
+The `--serve` flag starts a local HTTP server with live reload — the browser automatically refreshes when the HTML file changes on disk.
 
 ## Authentication
 
@@ -99,6 +91,8 @@ The CSV contains one row per week with these columns:
 | `week_start` | Monday of the week (YYYY-MM-DD) |
 | `week_end` | Sunday of the week (YYYY-MM-DD) |
 | `prs_merged` | Number of PRs merged that week |
+| `unique_authors` | Number of distinct PR authors |
+| `prs_per_engineer` | PRs merged / unique authors |
 | `total_additions` | Sum of lines added |
 | `total_deletions` | Sum of lines deleted |
 | `total_files_changed` | Sum of files changed |
@@ -107,14 +101,14 @@ The CSV contains one row per week with these columns:
 | `median_review_turnaround_hours` | Median hours from PR creation to first review |
 | `p90_review_turnaround_hours` | 90th percentile review turnaround |
 | `avg_pr_size_lines` | Average PR size (additions + deletions) / PR count |
-| `pct_ona_coauthored` | Percentage of PRs with an Ona co-author |
+| `pct_ona_involved` | Percentage of PRs with Ona co-authorship |
+| `revert_count` | Number of revert PRs |
+| `pct_reverts` | Percentage of PRs that are reverts |
 
 ## Default exclusions
 
 These accounts are always excluded from metrics:
 
-- `ona-automations`
-- `ona-gha-automations[bot]`
 - `dependabot[bot]`
 - `renovate[bot]`
 
@@ -123,12 +117,14 @@ Add more with `--exclude`.
 ## Project structure
 
 ```
-cmd/throughput/     Go source for the throughput tool
+cmd/throughput/
   main.go           CLI flags, repo detection, orchestration
   token.go          GitHub token resolution
   graphql.go        GraphQL client with retry/rate-limit handling
   fetch.go          Concurrent PR fetching with bounded worker pool
   metrics.go        PR filtering, cycle time, review turnaround, percentiles
   csv.go            Weekly aggregation and CSV output
-spec.md             Design spec
+  stats.go          Statistical analysis (trend windows, Pearson correlation, Mann-Whitney U)
+  html.go           HTML chart generation (Chart.js template, summary cards, quarterly table)
+  serve.go          Local HTTP server with file-watching live reload
 ```
