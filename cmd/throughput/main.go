@@ -170,17 +170,17 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Aggregating by week...\n")
 	csv, allWeekStats := aggregateCSV(filtered, weekRanges)
 
-	// Filter out low-activity weeks (e.g. holidays)
-	if *minPRs > 0 {
+	// Filter out low-activity weeks for CSV output and weekly granularity.
+	// For monthly granularity, keep all weeks for aggregation — filter at month level instead.
+	var droppedWeeks int
+	if *minPRs > 0 && *granularity == "weekly" {
 		var filteredRanges []weekRange
 		var filteredStats []weekStats
 		var filteredCSVLines []string
 		csvLines := strings.Split(csv, "\n")
-		// Keep header
 		if len(csvLines) > 0 {
 			filteredCSVLines = append(filteredCSVLines, csvLines[0])
 		}
-		var dropped int
 		for i, ws := range allWeekStats {
 			if ws.prsMerged >= *minPRs {
 				filteredRanges = append(filteredRanges, weekRanges[i])
@@ -189,11 +189,11 @@ func main() {
 					filteredCSVLines = append(filteredCSVLines, csvLines[i+1])
 				}
 			} else {
-				dropped++
+				droppedWeeks++
 			}
 		}
-		if dropped > 0 {
-			fmt.Fprintf(os.Stderr, "Excluded %d week(s) with fewer than %d PRs\n", dropped, *minPRs)
+		if droppedWeeks > 0 {
+			fmt.Fprintf(os.Stderr, "Excluded %d week(s) with fewer than %d PRs\n", droppedWeeks, *minPRs)
 		}
 		weekRanges = filteredRanges
 		allWeekStats = filteredStats
@@ -216,11 +216,56 @@ func main() {
 	// for stats and HTML. CSV output remains weekly.
 	chartRanges := weekRanges
 	chartStats := allWeekStats
+	var droppedMonths int
 	if *granularity == "monthly" {
 		fmt.Fprintf(os.Stderr, "Aggregating into calendar months...\n")
 		chartRanges, chartStats = aggregateMonthly(weekRanges, allWeekStats)
 		fmt.Fprintf(os.Stderr, "  %d months from %d weeks\n", len(chartRanges), len(weekRanges))
+
+		// Apply min-prs filter at the month level
+		if *minPRs > 0 {
+			var filteredRanges []weekRange
+			var filteredStats []weekStats
+			for i, ms := range chartStats {
+				if ms.prsMerged >= *minPRs {
+					filteredRanges = append(filteredRanges, chartRanges[i])
+					filteredStats = append(filteredStats, ms)
+				} else {
+					droppedMonths++
+				}
+			}
+			if droppedMonths > 0 {
+				fmt.Fprintf(os.Stderr, "Excluded %d month(s) with fewer than %d PRs\n", droppedMonths, *minPRs)
+			}
+			chartRanges = filteredRanges
+			chartStats = filteredStats
+		}
 	}
+
+	// Build filter notes for the HTML notice
+	var filterNotes []string
+	if droppedWeeks > 0 || droppedMonths > 0 {
+		if *granularity == "monthly" {
+			filterNotes = append(filterNotes, fmt.Sprintf("Excluded %d month(s) with fewer than %d merged PRs", droppedMonths, *minPRs))
+		} else {
+			filterNotes = append(filterNotes, fmt.Sprintf("Excluded %d week(s) with fewer than %d merged PRs", droppedWeeks, *minPRs))
+		}
+	}
+	if *excludeBottomPct > 0 {
+		filterNotes = append(filterNotes, fmt.Sprintf("Excluded bottom %d%% of contributors by total PR count", *excludeBottomPct))
+	}
+	{
+		var excluded []string
+		for u := range cfg.excludeSet {
+			excluded = append(excluded, u)
+		}
+		sort.Strings(excluded)
+		if len(excluded) > 0 {
+			filterNotes = append(filterNotes, fmt.Sprintf("Excluded users: %s", strings.Join(excluded, ", ")))
+		}
+	}
+	filterNotes = append(filterNotes, "Excluded bot-authored PRs")
+	filterNotes = append(filterNotes, "Excluded draft PRs")
 
 	// Statistical analysis (always compute if we have enough data, for HTML summary)
 	fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
@@ -246,7 +291,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Generating HTML chart...\n")
 		period := *granularity
 		title := fmt.Sprintf("%s/%s — %s to %s (%s)", cfg.owner, cfg.repo, startDate, today, period)
-		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel)
+		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel, filterNotes)
 		if err != nil {
 			fatal("Failed to generate HTML: %v", err)
 		}
