@@ -17,6 +17,8 @@ type weekStats struct {
 	medianCycleTime      float64 // first commit to merge (unreliable with squash merges); -1 if no data
 	pctOnaInvolved       float64
 	pctReverts           float64
+	buildRuns            int
+	buildSuccessPct      float64
 }
 
 // aggregateCSV buckets PRs into weeks and produces CSV output.
@@ -137,6 +139,32 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 	}
 
 	return sb.String(), allStats
+}
+
+// appendBuildColumns appends build_runs and build_success_pct columns to existing CSV.
+func appendBuildColumns(csv string, stats []weekStats) string {
+	lines := strings.Split(strings.TrimRight(csv, "\n"), "\n")
+	if len(lines) == 0 {
+		return csv
+	}
+
+	var sb strings.Builder
+	// Header
+	sb.WriteString(lines[0])
+	sb.WriteString(",build_runs,build_success_pct\n")
+
+	// Data rows
+	for i, line := range lines[1:] {
+		sb.WriteString(line)
+		if i < len(stats) {
+			fmt.Fprintf(&sb, ",%d,%.1f", stats[i].buildRuns, stats[i].buildSuccessPct)
+		} else {
+			sb.WriteString(",0,0.0")
+		}
+		sb.WriteByte('\n')
+	}
+
+	return sb.String()
 }
 
 // formatPercentile formats a percentile value, returning empty string for no data.

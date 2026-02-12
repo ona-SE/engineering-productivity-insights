@@ -22,6 +22,7 @@ type htmlWeek struct {
 	MedianReviewSpeed float64
 	PctOnaInvolved    float64
 	PctReverts        float64
+	BuildRuns         int
 }
 
 type htmlCategory struct {
@@ -64,6 +65,7 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			MedianReviewSpeed: rs,
 			PctOnaInvolved:    s.pctOnaInvolved,
 			PctReverts:        s.pctReverts,
+			BuildRuns:         s.buildRuns,
 		})
 	}
 
@@ -78,8 +80,10 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		"prs_per_engineer": {label: "PRs / Engineer", unit: "", category: "Speed", invertColor: false},
 		"pct_reverts":      {label: "Reverts", unit: "%", category: "Quality", invertColor: true},
 		"pct_ona_involved": {label: "Ona Involved", unit: "%", category: "Ona Uptake", invertColor: false},
-		"prs_merged":       {label: "PRs merged", unit: "", category: "activity"},
-		"unique_authors":   {label: "Unique authors", unit: "", category: "activity"},
+		"prs_merged":        {label: "PRs merged", unit: "", category: "activity"},
+		"unique_authors":    {label: "Unique authors", unit: "", category: "activity"},
+		"build_runs":        {label: "Builds", unit: "", category: "activity"},
+		"build_success_pct": {label: "Build success", unit: "%", category: "activity"},
 	}
 
 	// Category definitions in display order
@@ -148,10 +152,16 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		}
 
 		if cfg.category == "activity" {
+			actFirst := fmt.Sprintf("%.0f", r.firstAvg)
+			actLast := fmt.Sprintf("%.0f", r.lastAvg)
+			if cfg.unit != "" {
+				actFirst += cfg.unit
+				actLast += cfg.unit
+			}
 			data.ActivityLine = append(data.ActivityLine, htmlActivity{
 				Label:     cfg.label,
-				FirstAvg:  fmt.Sprintf("%.0f", r.firstAvg),
-				LastAvg:   fmt.Sprintf("%.0f", r.lastAvg),
+				FirstAvg:  actFirst,
+				LastAvg:   actLast,
 				PctChange: pctChange,
 				IsUp:      isUp,
 			})
@@ -273,7 +283,8 @@ const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
   prsPerEngineer: {{$w.PRsPerEngineer}},
   reviewSpeed: {{$w.MedianReviewSpeed}},
   pctOna: {{$w.PctOnaInvolved}},
-  pctReverts: {{$w.PctReverts}}
+  pctReverts: {{$w.PctReverts}},
+  buildRuns: {{$w.BuildRuns}}
 }{{end}}];
 
 const labels = weeks.map(w => w.week);
@@ -359,6 +370,17 @@ new Chart(document.getElementById("chart"), {
         borderDash: [6, 3],
         pointRadius: 4,
         pointHoverRadius: 6
+      },
+      {
+        label: "Builds",
+        data: weeks.map(w => w.buildRuns),
+        borderColor: "#f59e0b",
+        backgroundColor: "rgba(245,158,11,0.1)",
+        yAxisID: "y3",
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
       }
     ]
   },
@@ -375,6 +397,7 @@ new Chart(document.getElementById("chart"), {
             let v = ctx.parsed.y;
             if (ctx.dataset.yAxisID === "y1") return ctx.dataset.label + ": " + v.toFixed(1) + "%";
             if (ctx.dataset.yAxisID === "y2") return ctx.dataset.label + ": " + v.toFixed(2);
+            if (ctx.dataset.yAxisID === "y3") return ctx.dataset.label + ": " + v.toLocaleString();
             if (ctx.dataset.label === "PRs Merged") return ctx.dataset.label + ": " + v;
             return ctx.dataset.label + ": " + v.toFixed(2);
           }
@@ -411,9 +434,28 @@ new Chart(document.getElementById("chart"), {
         title: { display: true, text: "PRs/Engineer · Review Speed (hrs)" },
         beginAtZero: true,
         grid: { drawOnChartArea: false }
+      },
+      y3: {
+        type: "linear",
+        position: "left",
+        display: false,
+        title: { display: true, text: "Builds" },
+        beginAtZero: true,
+        grid: { drawOnChartArea: false }
       }
     }
-  }
+  },
+  plugins: [{
+    // Show/hide y3 axis when Builds dataset is toggled
+    id: "y3Toggle",
+    afterUpdate(chart) {
+      const ds = chart.data.datasets.find(d => d.yAxisID === "y3");
+      if (ds && chart.scales.y3) {
+        const meta = chart.getDatasetMeta(chart.data.datasets.indexOf(ds));
+        chart.scales.y3.options.display = !meta.hidden;
+      }
+    }
+  }]
 });
 </script>
 </body>

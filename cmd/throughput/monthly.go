@@ -67,11 +67,13 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 		g := groups[key]
 
 		var totalPRs int
-		var prsPerEngVals, reviewSpeedVals, onaVals, revertPctVals []float64
+		var totalBuildRuns int
+		var prsPerEngVals, reviewSpeedVals, onaVals, revertPctVals, buildSuccessVals []float64
 
 		for _, wi := range g.weeks {
 			ws := stats[wi]
 			totalPRs += ws.prsMerged
+			totalBuildRuns += ws.buildRuns
 
 			if ws.prsMerged > 0 {
 				prsPerEngVals = append(prsPerEngVals, ws.prsPerEngineer)
@@ -80,6 +82,9 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 			}
 			if ws.medianReviewSpeed >= 0 && ws.prsMerged > 0 {
 				reviewSpeedVals = append(reviewSpeedVals, ws.medianReviewSpeed)
+			}
+			if ws.buildRuns > 0 {
+				buildSuccessVals = append(buildSuccessVals, ws.buildSuccessPct)
 			}
 		}
 
@@ -117,6 +122,8 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 			medianCycleTime:   -1, // not meaningful at monthly level
 			pctOnaInvolved:    medianOna,
 			pctReverts:        medianRevertPct,
+			buildRuns:         totalBuildRuns,
+			buildSuccessPct:   medianFloat(buildSuccessVals),
 		})
 	}
 
