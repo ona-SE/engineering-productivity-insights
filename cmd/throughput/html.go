@@ -12,7 +12,6 @@ type htmlData struct {
 	FilterNotes []string
 	Weeks       []htmlWeek
 	Stats       []htmlStat
-	Quarters    []htmlQuarter
 }
 
 type htmlWeek struct {
@@ -31,73 +30,6 @@ type htmlStat struct {
 	IsUp      bool // true = positive change
 	PctChange string
 	Unit      string
-}
-
-type htmlQuarter struct {
-	Label              string
-	DateRange          string
-	PRsMerged          string
-	PRsPerEngineer     string
-	MedianReviewSpeed  string
-	PctOnaInvolved     string
-	PctReverts         string
-}
-
-func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
-	n := len(weeks)
-	if n < 4 {
-		return nil
-	}
-	qSize := n / 4
-	var quarters []htmlQuarter
-	for q := 0; q < 4; q++ {
-		start := q * qSize
-		end := start + qSize
-		if q == 3 {
-			end = n // last quarter absorbs remainder
-		}
-		var totalPRs, count int
-		var sumPrsPerEng, sumReviewSpeed, sumOna, sumReverts float64
-		var reviewSpeedCount int
-		for i := start; i < end; i++ {
-			s := stats[i]
-			if s.prsMerged > 0 {
-				count++
-				totalPRs += s.prsMerged
-				sumPrsPerEng += s.prsPerEngineer
-				sumOna += s.pctOnaInvolved
-				sumReverts += s.pctReverts
-				if s.medianReviewSpeed >= 0 {
-					sumReviewSpeed += s.medianReviewSpeed
-					reviewSpeedCount++
-				}
-			}
-		}
-		label := fmt.Sprintf("Q%d", q+1)
-		dateRange := fmt.Sprintf("%s – %s",
-			weeks[start].start.Format("Jan 2, 2006"),
-			weeks[end-1].end.Format("Jan 2, 2006"))
-
-		qr := htmlQuarter{Label: label, DateRange: dateRange}
-		if count > 0 {
-			qr.PRsMerged = fmt.Sprintf("%.0f", float64(totalPRs)/float64(count))
-			qr.PRsPerEngineer = fmt.Sprintf("%.1f", sumPrsPerEng/float64(count))
-			qr.PctOnaInvolved = fmt.Sprintf("%.1f%%", sumOna/float64(count))
-			qr.PctReverts = fmt.Sprintf("%.1f%%", sumReverts/float64(count))
-		} else {
-			qr.PRsMerged = "–"
-			qr.PRsPerEngineer = "–"
-			qr.PctOnaInvolved = "–"
-			qr.PctReverts = "–"
-		}
-		if reviewSpeedCount > 0 {
-			qr.MedianReviewSpeed = fmt.Sprintf("%.1f hrs", sumReviewSpeed/float64(reviewSpeedCount))
-		} else {
-			qr.MedianReviewSpeed = "–"
-		}
-		quarters = append(quarters, qr)
-	}
-	return quarters
 }
 
 func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string) (string, error) {
@@ -181,9 +113,6 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		})
 	}
 
-	// Compute quarterly averages (split into 4 equal groups)
-	data.Quarters = computeQuarters(weeks, weeklyStats)
-
 	tmpl, err := template.New("chart").Parse(htmlTemplate)
 	if err != nil {
 		return "", fmt.Errorf("parse template: %w", err)
@@ -221,13 +150,7 @@ const htmlTemplate = `<!DOCTYPE html>
   .stat-pct { margin-left: auto; }
   .stat-pct.up { color: #16a34a; }
   .stat-pct.down { color: #dc2626; }
-  .section-title { font-size: 0.85rem; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
-  .quarter-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px; overflow: hidden; }
-  .quarter-table th { font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; padding: 10px 14px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-  .quarter-table td { font-size: 0.95rem; font-weight: 500; padding: 10px 14px; border-bottom: 1px solid #f3f4f6; }
-  .quarter-table tr:last-child td { border-bottom: none; }
-  .quarter-label { font-weight: 700; }
-  .quarter-dates { font-size: 0.75rem; color: #9ca3af; font-weight: 400; }
+
   .chart-container { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   canvas { width: 100% !important; }
 </style>
@@ -259,33 +182,6 @@ const htmlTemplate = `<!DOCTYPE html>
     {{end}}
   </div>
   {{end}}
-  {{if .Quarters}}
-  <div class="section-title">Quarterly Averages</div>
-  <table class="quarter-table">
-    <thead>
-      <tr>
-        <th>Period</th>
-        <th>PRs Merged / wk</th>
-        <th>PRs / Engineer</th>
-        <th>Review Speed</th>
-        <th>Ona Involved</th>
-        <th>Reverts</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Quarters}}
-      <tr>
-        <td><span class="quarter-label">{{.Label}}</span> <span class="quarter-dates">{{.DateRange}}</span></td>
-        <td>{{.PRsMerged}}</td>
-        <td>{{.PRsPerEngineer}}</td>
-        <td>{{.MedianReviewSpeed}}</td>
-        <td>{{.PctOnaInvolved}}</td>
-        <td>{{.PctReverts}}</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-  {{end}}
   <div class="chart-container">
     <canvas id="chart"></canvas>
   </div>
@@ -301,6 +197,17 @@ const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
 }{{end}}];
 
 const labels = weeks.map(w => w.week);
+
+// Linear regression for PRs per Engineer trendline
+const ppeData = weeks.map(w => w.prsPerEngineer);
+const n = ppeData.length;
+let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+for (let i = 0; i < n; i++) {
+  sumX += i; sumY += ppeData[i]; sumXY += i * ppeData[i]; sumXX += i * i;
+}
+const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+const intercept = (sumY - slope * sumX) / n;
+const trendData = ppeData.map((_, i) => Math.round((slope * i + intercept) * 100) / 100);
 
 new Chart(document.getElementById("chart"), {
   type: "line",
@@ -326,6 +233,18 @@ new Chart(document.getElementById("chart"), {
         tension: 0.3,
         pointRadius: 4,
         pointHoverRadius: 6
+      },
+      {
+        label: "PRs/Eng Trend",
+        data: trendData,
+        borderColor: "rgba(22,163,74,0.5)",
+        backgroundColor: "transparent",
+        yAxisID: "y2",
+        borderDash: [6, 4],
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        tension: 0
       },
       {
         label: "Review Speed (hrs)",
