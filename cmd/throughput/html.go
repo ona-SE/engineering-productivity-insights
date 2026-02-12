@@ -222,7 +222,8 @@ new Chart(document.getElementById("chart"), {
         yAxisID: "y",
         tension: 0.3,
         pointRadius: 4,
-        pointHoverRadius: 6
+        pointHoverRadius: 6,
+        hidden: true
       },
       {
         label: "PRs per Engineer",
@@ -254,7 +255,8 @@ new Chart(document.getElementById("chart"), {
         yAxisID: "y2",
         tension: 0.3,
         pointRadius: 4,
-        pointHoverRadius: 6
+        pointHoverRadius: 6,
+        hidden: true
       },
       {
         label: "% Ona Involved",
