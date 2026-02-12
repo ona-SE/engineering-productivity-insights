@@ -35,9 +35,9 @@ var allMetrics = []metricDef{
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
 	},
 	{
-		name:    "median_cycle_time_hours",
-		extract: func(ws weekStats) float64 { return ws.medianCycleTime },
-		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 && ws.medianCycleTime >= 0 },
+		name:    "median_review_speed_hours",
+		extract: func(ws weekStats) float64 { return ws.medianReviewSpeed },
+		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 && ws.medianReviewSpeed >= 0 },
 	},
 	{
 		name:    "pct_reverts",
