@@ -99,7 +99,7 @@ func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
 	return quarters
 }
 
-func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow) (string, error) {
+func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string) (string, error) {
 	data := htmlData{Title: title}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
@@ -152,9 +152,9 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			firstEnd := weeks[ws-1].end
 			lastStart := weeks[n-ws].start
 			lastEnd := weeks[n-1].end
-			data.WindowDesc = fmt.Sprintf("Comparing first %d week(s) (%s – %s) vs last %d week(s) (%s – %s)",
-				ws, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
-				ws, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
+			data.WindowDesc = fmt.Sprintf("Comparing first %d %s(s) (%s – %s) vs last %d %s(s) (%s – %s)",
+				ws, periodLabel, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
+				ws, periodLabel, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
 		}
 	}
 

@@ -35,10 +35,13 @@ go run ./cmd/throughput/ [flags]
 | `--port` | `8080` | Port for the local server (used with `--serve`) |
 | `--min-prs` | `0` | Exclude weeks with fewer than N merged PRs (e.g. holiday weeks) |
 | `--exclude-bottom-contributor-pct` | `0` | Exclude bottom N% of contributors by total PR count (0-99) |
-| `--compare-window-pct` | `5` | Compare first/last N% of weeks (1-49) |
-| `--compare-ona-threshold` | `0` | Compare weeks below vs above N% Ona usage (e.g. 70) |
+| `--granularity` | `weekly` | Aggregation for stats and chart: `weekly` or `monthly` |
+| `--compare-window-pct` | `5` | Compare first/last N% of periods (1-49) |
+| `--compare-ona-threshold` | `0` | Compare periods below vs above N% Ona usage (e.g. 70) |
 
 `--compare-window-pct` and `--compare-ona-threshold` are mutually exclusive.
+
+When `--granularity monthly` is used, weekly data is grouped into calendar months for the stats analysis and HTML chart. The CSV output remains weekly. Rate metrics (PRs/engineer, review speed, Ona %, revert %) use the median of weekly values; PR counts are summed. The last incomplete month is automatically dropped.
 
 ### Examples
 
@@ -55,6 +58,9 @@ go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --exclude-botto
 # CSV + HTML + stats all at once
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 26 \
   --output report.csv --html chart.html --stats-output stats.csv
+
+# Monthly aggregation for smoother trends
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --granularity monthly --serve
 
 # Exclude additional users
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --exclude "staging-bot,test-user"
@@ -143,6 +149,7 @@ cmd/throughput/
   fetch.go          Concurrent PR fetching with bounded worker pool
   metrics.go        PR filtering, cycle time, review turnaround, percentiles
   csv.go            Weekly aggregation and CSV output
+  monthly.go        Monthly aggregation of weekly stats (medians for rates, sums for counts)
   stats.go          Statistical analysis (trend windows, Pearson correlation, Mann-Whitney U)
   html.go           HTML chart generation (Chart.js template, summary cards, quarterly table)
   serve.go          Local HTTP server with file-watching live reload

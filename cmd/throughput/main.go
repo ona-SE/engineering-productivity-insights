@@ -34,9 +34,14 @@ func main() {
 	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
 	minPRs := flag.Int("min-prs", 0, "exclude weeks with fewer than N merged PRs (e.g. holiday weeks)")
 	excludeBottomPct := flag.Int("exclude-bottom-contributor-pct", 0, "exclude bottom N% of contributors by total PR count (0-99)")
+	granularity := flag.String("granularity", "weekly", "aggregation granularity for stats and chart: weekly or monthly")
 	compareWindowPct := flag.Int("compare-window-pct", 5, "compare first/last N% of weeks (1-49, default 5)")
 	compareOnaThreshold := flag.Float64("compare-ona-threshold", 0, "compare weeks below vs above N% Ona usage (e.g. 70)")
 	flag.Parse()
+
+	if *granularity != "weekly" && *granularity != "monthly" {
+		fatal("--granularity must be 'weekly' or 'monthly'")
+	}
 
 	if *compareWindowPct != 5 && *compareOnaThreshold > 0 {
 		fatal("--compare-window-pct and --compare-ona-threshold are mutually exclusive")
@@ -207,9 +212,23 @@ func main() {
 		fmt.Print(csv)
 	}
 
+	// Monthly aggregation (optional): group weekly data into calendar months
+	// for stats and HTML. CSV output remains weekly.
+	chartRanges := weekRanges
+	chartStats := allWeekStats
+	if *granularity == "monthly" {
+		fmt.Fprintf(os.Stderr, "Aggregating into calendar months...\n")
+		chartRanges, chartStats = aggregateMonthly(weekRanges, allWeekStats)
+		fmt.Fprintf(os.Stderr, "  %d months from %d weeks\n", len(chartRanges), len(weekRanges))
+	}
+
 	// Statistical analysis (always compute if we have enough data, for HTML summary)
 	fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
-	statsCSV, statsRows := generateStats(allWeekStats, *compareWindowPct, *compareOnaThreshold)
+	periodLabel := "week"
+	if *granularity == "monthly" {
+		periodLabel = "month"
+	}
+	statsCSV, statsRows := generateStats(chartStats, *compareWindowPct, *compareOnaThreshold, periodLabel)
 
 	if *statsOutput != "" {
 		if statsCSV != "" {
@@ -225,8 +244,9 @@ func main() {
 	// HTML visualization (optional)
 	if *htmlOutput != "" {
 		fmt.Fprintf(os.Stderr, "Generating HTML chart...\n")
-		title := fmt.Sprintf("%s/%s — %s to %s", cfg.owner, cfg.repo, startDate, today)
-		htmlContent, err := generateHTML(title, weekRanges, allWeekStats, statsRows)
+		period := *granularity
+		title := fmt.Sprintf("%s/%s — %s to %s (%s)", cfg.owner, cfg.repo, startDate, today, period)
+		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel)
 		if err != nil {
 			fatal("Failed to generate HTML: %v", err)
 		}

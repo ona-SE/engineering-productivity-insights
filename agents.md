@@ -29,7 +29,8 @@ To run with the interactive chart visualization:
 
 All Go source lives in `cmd/throughput/`:
 
-- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`, `--exclude-bottom-contributor-pct`, `--compare-window-pct`, `--compare-ona-threshold`.
+- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`, `--exclude-bottom-contributor-pct`, `--granularity`, `--compare-window-pct`, `--compare-ona-threshold`.
+- `monthly.go` — Aggregates weekly stats into calendar months. Uses medians for rate metrics (PRs/engineer, review speed, Ona %, revert %) and sums for counts (PRs merged). Drops the last incomplete month.
 - `token.go` — Resolves GitHub token from env vars or git credential helper.
 - `graphql.go` — GraphQL HTTP client with retry (3 attempts, backoff) and rate-limit handling.
 - `fetch.go` — Concurrent PR fetching. Uses a bounded goroutine pool (10 workers). Each worker fetches one week's PRs with pagination.
@@ -51,6 +52,7 @@ All Go source lives in `cmd/throughput/`:
 - **HTML visualization**: Chart.js loaded from CDN, data embedded inline as JSON. The `--serve` flag injects a live-reload script via SSE. File watcher polls every 500ms using modtime + size + FNV-1a content hash.
 - **Stats window**: Two mutually exclusive modes. `--compare-window-pct N` (default 5) compares first N% vs last N% of valid weeks (min 1 week per side). `--compare-ona-threshold N` splits weeks by Ona usage percentage (below vs above N%). The `windowSize` is stored on `consolidatedRow` so the HTML can display actual date ranges.
 - **Quarterly averages**: Splits weeks into 4 equal groups (not calendar quarters). Last group absorbs remainder.
+- **Monthly aggregation**: `--granularity monthly` groups weekly data into calendar months for stats and HTML output. CSV output remains weekly. Rate metrics (PRs/engineer, review speed, Ona %, revert %) use the median of weekly values; PR counts are summed. The last incomplete month is automatically dropped.
 - **Cycle time metrics**: Two cycle time metrics are computed per PR:
   - **Review speed** (`reviewSpeedHours`): PR opened (`createdAt`) to merged (`mergedAt`). This is the primary metric, used in stats analysis, HTML stat cards, chart, and quarterly table. Matches GetDX's "cycle time" definition.
   - **Commit-to-merge** (`cycleTimeHours`): First commit `authoredDate` to merged. Present in CSV only (`median_commit_to_merge_hours`, `p90_commit_to_merge_hours`). **Does not work for repos using squash-and-merge** — squash merging replaces all branch commits with a single commit whose `authoredDate` is set at squash time (near merge time), making this metric nearly identical to review speed. Only meaningful for repos using merge commits that preserve original commit history.
