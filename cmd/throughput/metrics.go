@@ -12,16 +12,17 @@ var revertRe = regexp.MustCompile(`(?i)\b(revert|reverting|rollback|roll\s+back|
 
 // enrichedPR holds a PR with computed metrics.
 type enrichedPR struct {
-	mergedEpoch       int64
-	cycleTimeHours    float64 // -1 means not available
-	reviewTurnaround  float64 // -1 means not available
-	additions         int
-	deletions         int
-	changedFiles      int
-	number            int
-	authorLogin       string
-	onaInvolved       bool
-	isRevert          bool
+	mergedEpoch          int64
+	cycleTimeHours       float64 // first commit to merge (unreliable with squash merges); -1 means not available
+	reviewSpeedHours     float64 // PR opened to merge; -1 means not available
+	reviewTurnaround     float64 // -1 means not available
+	additions            int
+	deletions            int
+	changedFiles         int
+	number               int
+	authorLogin          string
+	onaInvolved          bool
+	isRevert             bool
 }
 
 // filterPRs filters out bots and excluded users, computes metrics.
@@ -45,6 +46,11 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			continue
 		}
 
+		// Skip draft PRs (matching GetDX behavior)
+		if pr.IsDraft {
+			continue
+		}
+
 		mergedEpoch := pr.MergedAt.Unix()
 		createdEpoch := pr.CreatedAt.Unix()
 
@@ -60,6 +66,13 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 					cycleHours = math.Round(cycleHours*100) / 100
 				}
 			}
+		}
+
+		// Review speed: PR created to merged (matches GetDX "cycle time" definition)
+		reviewSpeedHours := -1.0
+		if mergedEpoch >= createdEpoch && createdEpoch > 0 {
+			reviewSpeedHours = float64(mergedEpoch-createdEpoch) / 3600.0
+			reviewSpeedHours = math.Round(reviewSpeedHours*100) / 100
 		}
 
 		// Review turnaround: PR created to first review submitted
@@ -88,6 +101,7 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 		result = append(result, enrichedPR{
 			mergedEpoch:      mergedEpoch,
 			cycleTimeHours:   cycleHours,
+			reviewSpeedHours: reviewSpeedHours,
 			reviewTurnaround: reviewHours,
 			additions:        pr.Additions,
 			deletions:        pr.Deletions,

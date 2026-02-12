@@ -6,16 +6,17 @@ import (
 	"time"
 )
 
-const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_cycle_time_hours,p90_cycle_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
+const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_review_speed_hours,p90_review_speed_hours,median_commit_to_merge_hours,p90_commit_to_merge_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
 
 // weekStats holds the computed per-week values needed by the stats analysis.
 type weekStats struct {
-	prsMerged          int
-	uniqueAuthors      int
-	prsPerEngineer     float64
-	medianCycleTime    float64 // -1 if no data
-	pctOnaInvolved     float64
-	pctReverts         float64
+	prsMerged            int
+	uniqueAuthors        int
+	prsPerEngineer       float64
+	medianReviewSpeed    float64 // PR opened to merge; -1 if no data
+	medianCycleTime      float64 // first commit to merge (unreliable with squash merges); -1 if no data
+	pctOnaInvolved       float64
+	pctReverts           float64
 }
 
 // aggregateCSV buckets PRs into weeks and produces CSV output.
@@ -37,15 +38,16 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 
 	// Bucket PRs into weeks
 	type weekBucket struct {
-		count       int
-		additions   int
-		deletions   int
-		files       int
-		onaCount    int
-		revertCount int
-		cycleTimes  []float64
-		reviewTimes []float64
-		authors     map[string]bool
+		count            int
+		additions        int
+		deletions        int
+		files            int
+		onaCount         int
+		revertCount      int
+		reviewSpeeds     []float64 // PR opened to merge
+		cycleTimes       []float64 // first commit to merge
+		reviewTimes      []float64
+		authors          map[string]bool
 	}
 	buckets := make([]weekBucket, len(weeks))
 	for i := range buckets {
@@ -65,6 +67,9 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 				}
 				if pr.isRevert {
 					buckets[i].revertCount++
+				}
+				if pr.reviewSpeedHours >= 0 {
+					buckets[i].reviewSpeeds = append(buckets[i].reviewSpeeds, pr.reviewSpeedHours)
 				}
 				if pr.cycleTimeHours >= 0 {
 					buckets[i].cycleTimes = append(buckets[i].cycleTimes, pr.cycleTimeHours)
@@ -95,6 +100,8 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 			prsPerEng = float64(b.count) / float64(uniqueAuthors)
 		}
 
+		medReviewSpeed := formatPercentile(median(b.reviewSpeeds))
+		p90ReviewSpeed := formatPercentile(p90(b.reviewSpeeds))
 		medCycle := formatPercentile(median(b.cycleTimes))
 		p90Cycle := formatPercentile(p90(b.cycleTimes))
 		medReview := formatPercentile(median(b.reviewTimes))
@@ -111,19 +118,21 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 			avgSize = "0.00"
 		}
 
-		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
+		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
 			ws, we, b.count, uniqueAuthors, prsPerEng,
 			b.additions, b.deletions, b.files,
-			medCycle, p90Cycle, medReview, p90Review, avgSize, pctOna,
+			medReviewSpeed, p90ReviewSpeed, medCycle, p90Cycle,
+			medReview, p90Review, avgSize, pctOna,
 			b.revertCount, pctReverts)
 
 		allStats[i] = weekStats{
-			prsMerged:       b.count,
-			uniqueAuthors:   uniqueAuthors,
-			prsPerEngineer:  prsPerEng,
-			medianCycleTime: median(b.cycleTimes),
-			pctOnaInvolved:  pctOna,
-			pctReverts:      pctReverts,
+			prsMerged:         b.count,
+			uniqueAuthors:     uniqueAuthors,
+			prsPerEngineer:    prsPerEng,
+			medianReviewSpeed: median(b.reviewSpeeds),
+			medianCycleTime:   median(b.cycleTimes),
+			pctOnaInvolved:    pctOna,
+			pctReverts:        pctReverts,
 		}
 	}
 

@@ -1,6 +1,6 @@
 # Engineering Insights
 
-Week-over-week PR throughput metrics for any GitHub repository. Fetches merged PRs via the GitHub GraphQL API and produces a CSV with cycle time, review turnaround, PR size, revert tracking, and Ona co-authorship stats. Includes a built-in interactive chart visualization.
+Week-over-week PR throughput metrics for any GitHub repository. Fetches merged PRs via the GitHub GraphQL API and produces a CSV with review speed (open-to-merge), review turnaround, PR size, revert tracking, and Ona co-authorship stats. Includes a built-in interactive chart visualization.
 
 Fetches all weeks concurrently -- a 52-week analysis completes in ~1-2 minutes.
 
@@ -76,7 +76,7 @@ When using `--serve` or `--html`, the tool generates a self-contained HTML file 
 - **Dual-axis line chart** with:
   - Left axis: PRs merged
   - Right axis 1: % Ona involved, % reverts (0-100%)
-  - Right axis 2: PRs per engineer, median cycle time (hrs)
+  - Right axis 2: PRs per engineer, review speed (hrs)
 
 The `--serve` flag starts a local HTTP server with live reload — the browser automatically refreshes when the HTML file changes on disk.
 
@@ -104,14 +104,25 @@ The CSV contains one row per week with these columns:
 | `total_additions` | Sum of lines added |
 | `total_deletions` | Sum of lines deleted |
 | `total_files_changed` | Sum of files changed |
-| `median_cycle_time_hours` | Median hours from first commit to merge |
-| `p90_cycle_time_hours` | 90th percentile cycle time |
+| `median_review_speed_hours` | Median hours from PR opened to merge |
+| `p90_review_speed_hours` | 90th percentile review speed |
+| `median_commit_to_merge_hours` | Median hours from first commit to merge (see note below) |
+| `p90_commit_to_merge_hours` | 90th percentile commit-to-merge time |
 | `median_review_turnaround_hours` | Median hours from PR creation to first review |
 | `p90_review_turnaround_hours` | 90th percentile review turnaround |
 | `avg_pr_size_lines` | Average PR size (additions + deletions) / PR count |
 | `pct_ona_involved` | Percentage of PRs with Ona co-authorship |
 | `revert_count` | Number of revert PRs |
 | `pct_reverts` | Percentage of PRs that are reverts |
+
+### Cycle time metrics
+
+The tool computes two cycle time metrics:
+
+- **Review speed** (`median_review_speed_hours`) — time from PR opened to merged. This is the primary metric used in the stats analysis, HTML stat cards, chart, and quarterly table. Matches GetDX's "cycle time" definition.
+- **Commit-to-merge** (`median_commit_to_merge_hours`) — time from first commit `authoredDate` to merged. Included in CSV output only. **Does not work for repos using squash-and-merge.** Squash merging replaces all branch commits with a single commit whose `authoredDate` is set at squash time (near merge time), making this metric nearly identical to review speed. Only meaningful for repos that use merge commits preserving original commit history.
+
+Draft PRs are excluded from all metrics.
 
 ## Default exclusions
 

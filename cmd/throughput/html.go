@@ -15,12 +15,12 @@ type htmlData struct {
 }
 
 type htmlWeek struct {
-	WeekStart       string
-	PRsMerged       int
-	PRsPerEngineer  float64
-	MedianCycleTime float64
-	PctOnaInvolved  float64
-	PctReverts      float64
+	WeekStart          string
+	PRsMerged          int
+	PRsPerEngineer     float64
+	MedianReviewSpeed  float64
+	PctOnaInvolved     float64
+	PctReverts         float64
 }
 
 type htmlStat struct {
@@ -33,13 +33,13 @@ type htmlStat struct {
 }
 
 type htmlQuarter struct {
-	Label           string
-	DateRange       string
-	PRsMerged       string
-	PRsPerEngineer  string
-	MedianCycleTime string
-	PctOnaInvolved  string
-	PctReverts      string
+	Label              string
+	DateRange          string
+	PRsMerged          string
+	PRsPerEngineer     string
+	MedianReviewSpeed  string
+	PctOnaInvolved     string
+	PctReverts         string
 }
 
 func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
@@ -56,8 +56,8 @@ func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
 			end = n // last quarter absorbs remainder
 		}
 		var totalPRs, count int
-		var sumPrsPerEng, sumCycleTime, sumOna, sumReverts float64
-		var cycleCount int
+		var sumPrsPerEng, sumReviewSpeed, sumOna, sumReverts float64
+		var reviewSpeedCount int
 		for i := start; i < end; i++ {
 			s := stats[i]
 			if s.prsMerged > 0 {
@@ -66,9 +66,9 @@ func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
 				sumPrsPerEng += s.prsPerEngineer
 				sumOna += s.pctOnaInvolved
 				sumReverts += s.pctReverts
-				if s.medianCycleTime >= 0 {
-					sumCycleTime += s.medianCycleTime
-					cycleCount++
+				if s.medianReviewSpeed >= 0 {
+					sumReviewSpeed += s.medianReviewSpeed
+					reviewSpeedCount++
 				}
 			}
 		}
@@ -89,10 +89,10 @@ func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
 			qr.PctOnaInvolved = "–"
 			qr.PctReverts = "–"
 		}
-		if cycleCount > 0 {
-			qr.MedianCycleTime = fmt.Sprintf("%.1f hrs", sumCycleTime/float64(cycleCount))
+		if reviewSpeedCount > 0 {
+			qr.MedianReviewSpeed = fmt.Sprintf("%.1f hrs", sumReviewSpeed/float64(reviewSpeedCount))
 		} else {
-			qr.MedianCycleTime = "–"
+			qr.MedianReviewSpeed = "–"
 		}
 		quarters = append(quarters, qr)
 	}
@@ -103,36 +103,36 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 	data := htmlData{Title: title}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
-		ct := s.medianCycleTime
-		if ct < 0 {
-			ct = 0
+		rs := s.medianReviewSpeed
+		if rs < 0 {
+			rs = 0
 		}
 		data.Weeks = append(data.Weeks, htmlWeek{
-			WeekStart:       wr.start.Format("2006-01-02"),
-			PRsMerged:       s.prsMerged,
-			PRsPerEngineer:  s.prsPerEngineer,
-			MedianCycleTime: ct,
-			PctOnaInvolved:  s.pctOnaInvolved,
-			PctReverts:      s.pctReverts,
+			WeekStart:         wr.start.Format("2006-01-02"),
+			PRsMerged:         s.prsMerged,
+			PRsPerEngineer:    s.prsPerEngineer,
+			MedianReviewSpeed: rs,
+			PctOnaInvolved:    s.pctOnaInvolved,
+			PctReverts:        s.pctReverts,
 		})
 	}
 
 	// Map metric names to display labels and units
 	labelMap := map[string]string{
-		"prs_merged":             "PRs Merged",
-		"unique_authors":         "Unique Authors",
-		"prs_per_engineer":       "PRs / Engineer",
-		"median_cycle_time_hours": "Median Cycle Time",
-		"pct_reverts":            "Reverts",
-		"pct_ona_involved":       "Ona Involved",
+		"prs_merged":                "PRs Merged",
+		"unique_authors":            "Unique Authors",
+		"prs_per_engineer":          "PRs / Engineer",
+		"median_review_speed_hours": "Review Speed",
+		"pct_reverts":               "Reverts",
+		"pct_ona_involved":          "Ona Involved",
 	}
 	unitMap := map[string]string{
-		"prs_merged":             "",
-		"unique_authors":         "",
-		"prs_per_engineer":       "",
-		"median_cycle_time_hours": "hrs",
-		"pct_reverts":            "%",
-		"pct_ona_involved":       "%",
+		"prs_merged":                "",
+		"unique_authors":            "",
+		"prs_per_engineer":          "",
+		"median_review_speed_hours": "hrs",
+		"pct_reverts":               "%",
+		"pct_ona_involved":          "%",
 	}
 
 	// Compute window description from the first summary row
@@ -254,7 +254,7 @@ const htmlTemplate = `<!DOCTYPE html>
         <th>Period</th>
         <th>PRs Merged / wk</th>
         <th>PRs / Engineer</th>
-        <th>Cycle Time</th>
+        <th>Review Speed</th>
         <th>Ona Involved</th>
         <th>Reverts</th>
       </tr>
@@ -265,7 +265,7 @@ const htmlTemplate = `<!DOCTYPE html>
         <td><span class="quarter-label">{{.Label}}</span> <span class="quarter-dates">{{.DateRange}}</span></td>
         <td>{{.PRsMerged}}</td>
         <td>{{.PRsPerEngineer}}</td>
-        <td>{{.MedianCycleTime}}</td>
+        <td>{{.MedianReviewSpeed}}</td>
         <td>{{.PctOnaInvolved}}</td>
         <td>{{.PctReverts}}</td>
       </tr>
@@ -282,7 +282,7 @@ const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
   week: "{{$w.WeekStart}}",
   prsMerged: {{$w.PRsMerged}},
   prsPerEngineer: {{$w.PRsPerEngineer}},
-  medianCycleTime: {{$w.MedianCycleTime}},
+  reviewSpeed: {{$w.MedianReviewSpeed}},
   pctOna: {{$w.PctOnaInvolved}},
   pctReverts: {{$w.PctReverts}}
 }{{end}}];
@@ -315,8 +315,8 @@ new Chart(document.getElementById("chart"), {
         pointHoverRadius: 6
       },
       {
-        label: "Median Cycle Time (hrs)",
-        data: weeks.map(w => w.medianCycleTime),
+        label: "Review Speed (hrs)",
+        data: weeks.map(w => w.reviewSpeed),
         borderColor: "#ea580c",
         backgroundColor: "rgba(234,88,12,0.1)",
         yAxisID: "y2",
@@ -394,7 +394,7 @@ new Chart(document.getElementById("chart"), {
       y2: {
         type: "linear",
         position: "right",
-        title: { display: true, text: "PRs/Engineer · Cycle Time (hrs)" },
+        title: { display: true, text: "PRs/Engineer · Review Speed (hrs)" },
         beginAtZero: true,
         grid: { drawOnChartArea: false }
       }

@@ -15,6 +15,7 @@ type PR struct {
 	Title        string    `json:"title"`
 	CreatedAt    time.Time `json:"createdAt"`
 	MergedAt     time.Time `json:"mergedAt"`
+	IsDraft      bool      `json:"isDraft"`
 	Additions    int       `json:"additions"`
 	Deletions    int       `json:"deletions"`
 	ChangedFiles int       `json:"changedFiles"`
@@ -113,6 +114,7 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 						title
 						createdAt
 						mergedAt
+						isDraft
 						additions
 						deletions
 						changedFiles
