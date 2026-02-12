@@ -7,11 +7,12 @@ import (
 )
 
 type htmlData struct {
-	Title      string
-	WindowDesc string
-	Weeks      []htmlWeek
-	Stats      []htmlStat
-	Quarters   []htmlQuarter
+	Title       string
+	WindowDesc  string
+	FilterNotes []string
+	Weeks       []htmlWeek
+	Stats       []htmlStat
+	Quarters    []htmlQuarter
 }
 
 type htmlWeek struct {
@@ -99,8 +100,8 @@ func computeQuarters(weeks []weekRange, stats []weekStats) []htmlQuarter {
 	return quarters
 }
 
-func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow) (string, error) {
-	data := htmlData{Title: title}
+func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string) (string, error) {
+	data := htmlData{Title: title, FilterNotes: filterNotes}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
 		rs := s.medianReviewSpeed
@@ -152,9 +153,9 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			firstEnd := weeks[ws-1].end
 			lastStart := weeks[n-ws].start
 			lastEnd := weeks[n-1].end
-			data.WindowDesc = fmt.Sprintf("Comparing first %d week(s) (%s – %s) vs last %d week(s) (%s – %s)",
-				ws, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
-				ws, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
+			data.WindowDesc = fmt.Sprintf("Comparing first %d %s(s) (%s – %s) vs last %d %s(s) (%s – %s)",
+				ws, periodLabel, firstStart.Format("Jan 2, 2006"), firstEnd.Format("Jan 2, 2006"),
+				ws, periodLabel, lastStart.Format("Jan 2, 2006"), lastEnd.Format("Jan 2, 2006"))
 		}
 	}
 
@@ -207,6 +208,10 @@ const htmlTemplate = `<!DOCTYPE html>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; color: #1a1a2e; padding: 24px; }
   h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 16px; }
   .container { max-width: 1200px; margin: 0 auto; }
+  .filter-notes { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.82rem; color: #4b5563; }
+  .filter-notes ul { margin: 4px 0 0 0; padding-left: 20px; }
+  .filter-notes li { margin: 2px 0; }
+  .filter-notes .filter-title { font-weight: 600; color: #374151; }
   .window-desc { font-size: 0.85rem; color: #6b7280; text-align: center; margin-bottom: 16px; }
   .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .stat-card { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -230,6 +235,14 @@ const htmlTemplate = `<!DOCTYPE html>
 <body>
 <div class="container">
   <h1>{{.Title}}</h1>
+  {{if .FilterNotes}}
+  <div class="filter-notes">
+    <span class="filter-title">Data filters applied:</span>
+    <ul>
+    {{range .FilterNotes}}<li>{{.}}</li>
+    {{end}}</ul>
+  </div>
+  {{end}}
   {{if .Stats}}
   <div class="window-desc">{{.WindowDesc}}</div>
   <div class="stats-grid">

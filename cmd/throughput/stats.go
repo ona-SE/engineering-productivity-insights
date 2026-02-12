@@ -79,7 +79,7 @@ const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,wi
 
 // generateStats produces the consolidated 6-row stats CSV.
 // It returns both the CSV string and the parsed rows for use by the HTML generator.
-func generateStats(allStats []weekStats, windowPct int, onaThreshold float64) (string, []consolidatedRow) {
+func generateStats(allStats []weekStats, windowPct int, onaThreshold float64, periodLabel string) (string, []consolidatedRow) {
 	// Compute overall average PRs/week (across all non-zero weeks)
 	var totalPRs int
 	var nonZeroCount int
@@ -124,7 +124,7 @@ func generateStats(allStats []weekStats, windowPct int, onaThreshold float64) (s
 	var rows []consolidatedRow
 
 	for _, md := range allMetrics {
-		row := buildRow(md, valid, onaVals, windowPct, onaThreshold)
+		row := buildRow(md, valid, onaVals, windowPct, onaThreshold, periodLabel)
 		if row != nil {
 			rows = append(rows, *row)
 		}
@@ -153,7 +153,7 @@ func (r *consolidatedRow) fmtLastAvg() string   { return fmt.Sprintf("%.2f", r.l
 func (r *consolidatedRow) fmtAbsChange() string { return fmt.Sprintf("%.2f", r.absChange) }
 
 // buildRow constructs one consolidated row for a metric.
-func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int, onaThreshold float64) *consolidatedRow {
+func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int, onaThreshold float64, periodLabel string) *consolidatedRow {
 	var firstAvg, lastAvg float64
 	var n, firstWinSize, lastWinSize int
 	var window string
@@ -164,7 +164,11 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int,
 		if !ok {
 			return nil
 		}
-		window = fmt.Sprintf("below %.0f%% Ona (%dw) vs above %.0f%% Ona (%dw)", onaThreshold, firstWinSize, onaThreshold, lastWinSize)
+		abbrev := "w"
+		if periodLabel == "month" {
+			abbrev = "mo"
+		}
+		window = fmt.Sprintf("below %.0f%% Ona (%d%s) vs above %.0f%% Ona (%d%s)", onaThreshold, firstWinSize, abbrev, onaThreshold, lastWinSize, abbrev)
 	} else {
 		var winSize int
 		firstAvg, lastAvg, n, winSize, ok = trendWindow(valid, md, windowPct)
@@ -173,7 +177,11 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int,
 		}
 		firstWinSize = winSize
 		lastWinSize = winSize
-		window = fmt.Sprintf("first %dw vs last %dw avg", winSize, winSize)
+		abbrev := "w"
+		if periodLabel == "month" {
+			abbrev = "mo"
+		}
+		window = fmt.Sprintf("first %d%s vs last %d%s avg", winSize, abbrev, winSize, abbrev)
 	}
 
 	absChange := lastAvg - firstAvg
