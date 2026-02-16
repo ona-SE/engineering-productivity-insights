@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -71,9 +74,42 @@ es.onerror = () => setTimeout(() => location.reload(), 2000);
 	})
 
 	addr := fmt.Sprintf(":%d", port)
+
+	// Bind the port first so it's listening before we try to open it in Gitpod
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		fatal("Failed to listen on %s: %v", addr, err)
+	}
+
 	fmt.Fprintf(os.Stderr, "Serving %s at http://localhost%s\n", htmlFile, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+
+	// Try to open the port in Gitpod and print the public URL
+	openGitpodPort(port)
+
+	if err := http.Serve(ln, mux); err != nil {
 		fatal("Server error: %v", err)
+	}
+}
+
+// openGitpodPort attempts to open the port via the Gitpod CLI and prints the
+// public URL. Silently does nothing if not in a Gitpod environment.
+func openGitpodPort(port int) {
+	gitpodBin, err := exec.LookPath("gitpod")
+	if err != nil {
+		return // not in a Gitpod environment
+	}
+
+	portStr := fmt.Sprintf("%d", port)
+	cmd := exec.Command(gitpodBin, "environment", "port", "open",
+		"--name", "throughput", portStr)
+	out, err := cmd.Output()
+	if err != nil {
+		return // port open failed, fall back to localhost
+	}
+
+	url := strings.TrimSpace(string(out))
+	if url != "" {
+		fmt.Fprintf(os.Stderr, "\nPublic URL: %s\n\n", url)
 	}
 }
 

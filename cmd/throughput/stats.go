@@ -17,7 +17,7 @@ type metricDef struct {
 	valid   func(ws weekStats) bool
 }
 
-// allMetrics defines the 6 rows in the consolidated stats CSV.
+// allMetrics defines the rows in the consolidated stats CSV.
 var allMetrics = []metricDef{
 	{
 		name:    "prs_merged",
@@ -48,6 +48,16 @@ var allMetrics = []metricDef{
 		name:    "pct_ona_involved",
 		extract: func(ws weekStats) float64 { return ws.pctOnaInvolved },
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
+	},
+	{
+		name:    "build_runs",
+		extract: func(ws weekStats) float64 { return float64(ws.buildRuns) },
+		valid:   func(ws weekStats) bool { return ws.buildRuns > 0 },
+	},
+	{
+		name:    "build_success_pct",
+		extract: func(ws weekStats) float64 { return ws.buildSuccessPct },
+		valid:   func(ws weekStats) bool { return ws.buildRuns > 0 },
 	},
 }
 

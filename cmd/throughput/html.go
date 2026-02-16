@@ -16,21 +16,38 @@ type htmlData struct {
 }
 
 type htmlWeek struct {
-	WeekStart          string
-	PRsMerged          int
-	PRsPerEngineer     float64
-	MedianReviewSpeed  float64
-	PctOnaInvolved     float64
-	PctReverts         float64
+	WeekStart         string
+	PRsMerged         int
+	PRsPerEngineer    float64
+	MedianReviewSpeed float64
+	PctOnaInvolved    float64
+	PctReverts        float64
+	BuildRuns         int
+}
+
+type htmlCategory struct {
+	Name        string // e.g. "Speed"
+	AccentColor string // e.g. "#2563eb"
+	TintColor   string // e.g. "rgba(37,99,235,0.06)"
+	Stats       []htmlStat
 }
 
 type htmlStat struct {
-	Label     string
-	FirstAvg  string
-	LastAvg   string
-	IsUp      bool // true = positive change
-	PctChange string
-	Unit      string
+	Label       string
+	FirstAvg    string
+	LastAvg     string
+	IsPositive  bool   // true = change is in the "good" direction (accounts for inversion)
+	PctChange   string
+	Unit        string
+	InvertColor bool // true = lower is better (e.g. reverts)
+}
+
+type htmlActivity struct {
+	Label     string // e.g. "PRs merged"
+	FirstAvg  string // e.g. "134"
+	LastAvg   string // e.g. "207"
+	PctChange string // e.g. "+8.2%"
+	IsUp      bool
 }
 
 type htmlContributor struct {
@@ -58,25 +75,37 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			MedianReviewSpeed: rs,
 			PctOnaInvolved:    s.pctOnaInvolved,
 			PctReverts:        s.pctReverts,
+			BuildRuns:         s.buildRuns,
 		})
 	}
 
-	// Map metric names to display labels and units
-	labelMap := map[string]string{
-		"prs_merged":                "PRs Merged",
-		"unique_authors":            "Unique Authors",
-		"prs_per_engineer":          "PRs / Engineer",
-		"median_review_speed_hours": "Review Speed",
-		"pct_reverts":               "Reverts",
-		"pct_ona_involved":          "Ona Involved",
+	// Metric display config
+	type metricConfig struct {
+		label       string
+		unit        string
+		category    string // "Speed", "Quality", "Ona Uptake", or "activity"
+		invertColor bool   // true = lower is better
 	}
-	unitMap := map[string]string{
-		"prs_merged":                "",
-		"unique_authors":            "",
-		"prs_per_engineer":          "",
-		"median_review_speed_hours": "hrs",
-		"pct_reverts":               "%",
-		"pct_ona_involved":          "%",
+	metricCfg := map[string]metricConfig{
+		"prs_per_engineer": {label: "PRs / Engineer", unit: "", category: "Speed", invertColor: false},
+		"pct_reverts":      {label: "Reverts", unit: "%", category: "Quality", invertColor: true},
+		"pct_ona_involved": {label: "Ona Involved", unit: "%", category: "Ona Uptake", invertColor: false},
+		"prs_merged":        {label: "PRs merged", unit: "", category: "activity"},
+		"unique_authors":    {label: "Unique authors", unit: "", category: "activity"},
+		"build_runs":        {label: "Builds", unit: "", category: "activity"},
+		"build_success_pct": {label: "Build success", unit: "%", category: "activity"},
+	}
+
+	// Category definitions in display order
+	type catDef struct {
+		name  string
+		accent string
+		tint   string
+	}
+	catOrder := []catDef{
+		{name: "Speed", accent: "#2563eb", tint: "#f0f4ff"},
+		{name: "Quality", accent: "#16a34a", tint: "#f0fdf4"},
+		{name: "Ona Uptake", accent: "#9333ea", tint: "#faf5ff"},
 	}
 
 	// Compute window description from the first summary row
@@ -84,10 +113,8 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		r := summaryRows[0]
 		n := len(weeks)
 		if r.firstWindowSize != r.lastWindowSize {
-			// Threshold-based split — use the window string directly
 			data.WindowDesc = "Comparing " + r.window
 		} else {
-			// Positional window — show date ranges
 			ws := r.windowSize
 			if ws < 1 {
 				ws = 1
@@ -102,17 +129,19 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		}
 	}
 
+	// Route metrics into categories and activity line
+	catStats := make(map[string][]htmlStat)
 	for _, r := range summaryRows {
-		label := labelMap[r.metric]
-		if label == "" {
-			label = r.metric
+		cfg, ok := metricCfg[r.metric]
+		if !ok {
+			continue // skip median_review_speed_hours and any unknown metrics
 		}
-		unit := unitMap[r.metric]
+
 		firstAvg := fmt.Sprintf("%.1f", r.firstAvg)
 		lastAvg := fmt.Sprintf("%.1f", r.lastAvg)
-		if unit != "" {
-			firstAvg += " " + unit
-			lastAvg += " " + unit
+		if cfg.unit != "" {
+			firstAvg += cfg.unit
+			lastAvg += cfg.unit
 		}
 		// For review speed and reverts, an increase is bad (invert color).
 		isGood := r.absChange >= 0
@@ -177,14 +206,22 @@ const htmlTemplate = `<!DOCTYPE html>
   .filter-notes li { margin: 2px 0; }
   .filter-notes .filter-title { font-weight: 600; color: #374151; }
   .window-desc { font-size: 0.85rem; color: #6b7280; text-align: center; margin-bottom: 16px; }
-  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .stat-card { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  .stat-label { font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
-  .stat-row { display: flex; align-items: baseline; gap: 8px; font-size: 1.25rem; font-weight: 600; }
-  .stat-arrow { color: #9ca3af; }
-  .stat-pct { margin-left: auto; }
-  .stat-pct.up { color: #16a34a; }
-  .stat-pct.down { color: #dc2626; }
+
+  .banner-strip { display: flex; align-items: center; gap: 16px; border-radius: 8px; padding: 16px 20px; margin-bottom: 10px; border-left: 5px solid; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .banner-category { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; min-width: 90px; }
+  .banner-metric { font-size: 0.9rem; color: #374151; min-width: 120px; }
+  .banner-pct { font-size: 1.5rem; font-weight: 700; }
+  .banner-pct.positive { color: #16a34a; }
+  .banner-pct.negative { color: #dc2626; }
+  .banner-detail { font-size: 0.85rem; color: #6b7280; margin-left: 8px; }
+  .banner-arrow { color: #9ca3af; margin: 0 4px; }
+
+  .activity-line { font-size: 0.8rem; color: #6b7280; margin-bottom: 20px; padding: 0 4px; }
+  .activity-line .activity-label { font-weight: 600; color: #9ca3af; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; margin-right: 8px; }
+  .activity-line .activity-sep { margin: 0 10px; color: #d1d5db; }
+  .activity-line .activity-pct { font-weight: 600; }
+  .activity-line .activity-pct.up { color: #16a34a; }
+  .activity-line .activity-pct.down { color: #dc2626; }
 
   .chart-container { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   canvas { width: 100% !important; }
@@ -214,20 +251,23 @@ const htmlTemplate = `<!DOCTYPE html>
     {{end}}</ul>
   </div>
   {{end}}
-  {{if .Stats}}
+  {{if .Categories}}
   <div class="window-desc">{{.WindowDesc}}</div>
-  <div class="stats-grid">
+  {{range .Categories}}
+  <div class="banner-strip" style="border-left-color: {{.AccentColor}}; background: {{.TintColor}};">
+    <span class="banner-category" style="color: {{.AccentColor}};">{{.Name}}</span>
     {{range .Stats}}
-    <div class="stat-card">
-      <div class="stat-label">{{.Label}}</div>
-      <div class="stat-row">
-        <span>{{.FirstAvg}}</span>
-        <span class="stat-arrow">&rarr;</span>
-        <span>{{.LastAvg}}</span>
-        <span class="stat-pct {{if .IsUp}}up{{else}}down{{end}}">({{.PctChange}})</span>
-      </div>
-    </div>
+    <span class="banner-metric">{{.Label}}</span>
+    <span class="banner-pct {{if .IsPositive}}positive{{else}}negative{{end}}">{{.PctChange}}</span>
+    <span class="banner-detail">{{.FirstAvg}} <span class="banner-arrow">&rarr;</span> {{.LastAvg}}</span>
     {{end}}
+  </div>
+  {{end}}
+  {{end}}
+  {{if .ActivityLine}}
+  <div class="activity-line">
+    <span class="activity-label">Activity</span>
+    {{range $i, $a := .ActivityLine}}{{if $i}}<span class="activity-sep">&middot;</span>{{end}}{{$a.Label}}: {{$a.FirstAvg}} <span class="banner-arrow">&rarr;</span> {{$a.LastAvg}} <span class="activity-pct {{if $a.IsUp}}up{{else}}down{{end}}">({{$a.PctChange}})</span>{{end}}
   </div>
   {{end}}
   <div class="chart-container">
@@ -261,7 +301,8 @@ const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
   prsPerEngineer: {{$w.PRsPerEngineer}},
   reviewSpeed: {{$w.MedianReviewSpeed}},
   pctOna: {{$w.PctOnaInvolved}},
-  pctReverts: {{$w.PctReverts}}
+  pctReverts: {{$w.PctReverts}},
+  buildRuns: {{$w.BuildRuns}}
 }{{end}}];
 
 const labels = weeks.map(w => w.week);
@@ -285,8 +326,8 @@ new Chart(document.getElementById("chart"), {
       {
         label: "PRs Merged",
         data: weeks.map(w => w.prsMerged),
-        borderColor: "#2563eb",
-        backgroundColor: "rgba(37,99,235,0.1)",
+        borderColor: "#6b7280",
+        backgroundColor: "rgba(107,114,128,0.1)",
         yAxisID: "y",
         tension: 0.3,
         pointRadius: 4,
@@ -296,8 +337,8 @@ new Chart(document.getElementById("chart"), {
       {
         label: "PRs per Engineer",
         data: weeks.map(w => w.prsPerEngineer),
-        borderColor: "#16a34a",
-        backgroundColor: "rgba(22,163,74,0.1)",
+        borderColor: "#2563eb",
+        backgroundColor: "rgba(37,99,235,0.1)",
         yAxisID: "y2",
         tension: 0.3,
         pointRadius: 4,
@@ -306,7 +347,7 @@ new Chart(document.getElementById("chart"), {
       {
         label: "PRs/Eng Trend",
         data: trendData,
-        borderColor: "rgba(22,163,74,0.5)",
+        borderColor: "rgba(37,99,235,0.5)",
         backgroundColor: "transparent",
         yAxisID: "y2",
         borderDash: [6, 4],
@@ -340,13 +381,24 @@ new Chart(document.getElementById("chart"), {
       {
         label: "% Reverts",
         data: weeks.map(w => w.pctReverts),
-        borderColor: "#dc2626",
-        backgroundColor: "rgba(220,38,38,0.1)",
+        borderColor: "#16a34a",
+        backgroundColor: "rgba(22,163,74,0.1)",
         yAxisID: "y1",
         tension: 0.3,
         borderDash: [6, 3],
         pointRadius: 4,
         pointHoverRadius: 6
+      },
+      {
+        label: "Builds",
+        data: weeks.map(w => w.buildRuns),
+        borderColor: "#f59e0b",
+        backgroundColor: "rgba(245,158,11,0.1)",
+        yAxisID: "y3",
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
       }
     ]
   },
@@ -363,6 +415,7 @@ new Chart(document.getElementById("chart"), {
             let v = ctx.parsed.y;
             if (ctx.dataset.yAxisID === "y1") return ctx.dataset.label + ": " + v.toFixed(1) + "%";
             if (ctx.dataset.yAxisID === "y2") return ctx.dataset.label + ": " + v.toFixed(2);
+            if (ctx.dataset.yAxisID === "y3") return ctx.dataset.label + ": " + v.toLocaleString();
             if (ctx.dataset.label === "PRs Merged") return ctx.dataset.label + ": " + v;
             return ctx.dataset.label + ": " + v.toFixed(2);
           }
@@ -399,9 +452,28 @@ new Chart(document.getElementById("chart"), {
         title: { display: true, text: "PRs/Engineer · Review Speed (hrs)" },
         beginAtZero: true,
         grid: { drawOnChartArea: false }
+      },
+      y3: {
+        type: "linear",
+        position: "left",
+        display: false,
+        title: { display: true, text: "Builds" },
+        beginAtZero: true,
+        grid: { drawOnChartArea: false }
       }
     }
-  }
+  },
+  plugins: [{
+    // Show/hide y3 axis when Builds dataset is toggled
+    id: "y3Toggle",
+    afterUpdate(chart) {
+      const ds = chart.data.datasets.find(d => d.yAxisID === "y3");
+      if (ds && chart.scales.y3) {
+        const meta = chart.getDatasetMeta(chart.data.datasets.indexOf(ds));
+        chart.scales.y3.options.display = !meta.hidden;
+      }
+    }
+  }]
 });
 </script>
 </body>

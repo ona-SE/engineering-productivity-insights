@@ -171,6 +171,20 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Aggregating by week...\n")
 	csv, allWeekStats := aggregateCSV(filtered, weekRanges)
 
+	// Fetch build volume from GitHub Actions REST API
+	buildStats := fetchBuildRuns(cfg, weekRanges)
+	if buildStats != nil {
+		for i := range allWeekStats {
+			if i < len(buildStats) {
+				allWeekStats[i].buildRuns = buildStats[i].runs
+				if buildStats[i].runs > 0 {
+					allWeekStats[i].buildSuccessPct = float64(buildStats[i].successCount) / float64(buildStats[i].runs) * 100
+				}
+			}
+		}
+	}
+	csv = appendBuildColumns(csv, allWeekStats)
+
 	// Filter out low-activity weeks for CSV output and weekly granularity.
 	// For monthly granularity, keep all weeks for aggregation — filter at month level instead.
 	var droppedWeeks int
