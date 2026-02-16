@@ -7,11 +7,12 @@ import (
 )
 
 type htmlData struct {
-	Title       string
-	WindowDesc  string
-	FilterNotes []string
-	Weeks       []htmlWeek
-	Stats       []htmlStat
+	Title        string
+	WindowDesc   string
+	FilterNotes  []string
+	Weeks        []htmlWeek
+	Stats        []htmlStat
+	Contributors []htmlContributor
 }
 
 type htmlWeek struct {
@@ -32,7 +33,17 @@ type htmlStat struct {
 	Unit      string
 }
 
-func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string) (string, error) {
+type htmlContributor struct {
+	Login      string
+	TotalPRs   int
+	BeforeRate string
+	AfterRate  string
+	PctChange  string
+	IsUp       bool
+	HasOnaPRs  bool
+}
+
+func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string, topContributors []contributorStat) (string, error) {
 	data := htmlData{Title: title, FilterNotes: filterNotes}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
@@ -103,13 +114,37 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			firstAvg += " " + unit
 			lastAvg += " " + unit
 		}
+		// For review speed and reverts, an increase is bad (invert color).
+		isGood := r.absChange >= 0
+		if r.metric == "median_review_speed_hours" || r.metric == "pct_reverts" {
+			isGood = r.absChange <= 0
+		}
+
 		data.Stats = append(data.Stats, htmlStat{
 			Label:     label,
 			FirstAvg:  firstAvg,
 			LastAvg:   lastAvg,
-			IsUp:      r.absChange >= 0,
+			IsUp:      isGood,
 			PctChange: r.pctChange,
 			Unit:      unit,
+		})
+	}
+
+	for _, c := range topContributors {
+		pctStr := fmt.Sprintf("%+.1f%%", c.pctChange)
+		if !c.hasOnaPRs {
+			pctStr = "No Ona PRs"
+		} else if c.beforeRate == 0 {
+			pctStr = "N/A"
+		}
+		data.Contributors = append(data.Contributors, htmlContributor{
+			Login:      c.login,
+			TotalPRs:   c.totalPRs,
+			BeforeRate: fmt.Sprintf("%.2f", c.beforeRate),
+			AfterRate:  fmt.Sprintf("%.2f", c.afterRate),
+			PctChange:  pctStr,
+			IsUp:       c.afterRate >= c.beforeRate,
+			HasOnaPRs:  c.hasOnaPRs,
 		})
 	}
 
@@ -153,6 +188,19 @@ const htmlTemplate = `<!DOCTYPE html>
 
   .chart-container { background: #fff; border-radius: 8px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   canvas { width: 100% !important; }
+
+  .contributors-section { margin-top: 24px; }
+  .contributors-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #374151; }
+  .contributors-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .contrib-card { background: #fff; border-radius: 8px; padding: 14px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .contrib-login { font-size: 0.95rem; font-weight: 600; color: #1a1a2e; }
+  .contrib-total { font-size: 0.75rem; color: #9ca3af; margin-bottom: 8px; }
+  .contrib-rates { display: flex; align-items: baseline; gap: 6px; font-size: 1.1rem; font-weight: 600; }
+  .contrib-rates .unit { font-size: 0.7rem; font-weight: 400; color: #9ca3af; }
+  .contrib-pct { margin-top: 4px; font-size: 0.85rem; font-weight: 600; }
+  .contrib-pct.up { color: #16a34a; }
+  .contrib-pct.down { color: #dc2626; }
+  .contrib-pct.neutral { color: #9ca3af; }
 </style>
 </head>
 <body>
@@ -185,6 +233,26 @@ const htmlTemplate = `<!DOCTYPE html>
   <div class="chart-container">
     <canvas id="chart"></canvas>
   </div>
+  {{if .Contributors}}
+  <div class="contributors-section">
+    <h2>Top Contributors — Before &amp; After Ona</h2>
+    <div class="contributors-grid">
+      {{range .Contributors}}
+      <div class="contrib-card">
+        <div class="contrib-login">@{{.Login}}</div>
+        <div class="contrib-total">{{.TotalPRs}} PRs total</div>
+        <div class="contrib-rates">
+          <span>{{.BeforeRate}}</span>
+          <span class="stat-arrow">&rarr;</span>
+          <span>{{.AfterRate}}</span>
+          <span class="unit">PRs/week</span>
+        </div>
+        <div class="contrib-pct {{if not .HasOnaPRs}}neutral{{else if .IsUp}}up{{else}}down{{end}}">{{.PctChange}}</div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
 </div>
 <script>
 const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
