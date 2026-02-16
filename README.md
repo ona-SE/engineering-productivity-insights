@@ -38,6 +38,7 @@ go run ./cmd/throughput/ [flags]
 | `--granularity` | `weekly` | Aggregation for stats and chart: `weekly` or `monthly` |
 | `--compare-window-pct` | `5` | Compare first/last N% of periods (1-49) |
 | `--compare-ona-threshold` | `0` | Compare periods below vs above N% Ona usage (e.g. 70) |
+| `--top-contributors` | `0` | Show top N contributors with before/after Ona PR rates in HTML (0 = disabled) |
 
 `--compare-window-pct` and `--compare-ona-threshold` are mutually exclusive.
 
@@ -62,6 +63,9 @@ go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 26 \
 # Monthly aggregation for smoother trends
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --granularity monthly --serve
 
+# Show top 5 contributors with before/after Ona throughput
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --top-contributors 5 --serve
+
 # Exclude additional users
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --exclude "staging-bot,test-user"
 ```
@@ -77,12 +81,13 @@ go build ./cmd/throughput/
 
 When using `--serve` or `--html`, the tool generates a self-contained HTML file with:
 
-- **Summary stat cards** showing before/after comparison with percentage change (first 5% vs last 5% of weeks)
-- **Quarterly averages table** splitting the time range into 4 equal periods
+- **Summary stat cards** showing before/after comparison with percentage change (first 5% vs last 5% of weeks). Colors are context-aware: review speed and revert increases are red.
 - **Dual-axis line chart** with:
   - Left axis: PRs merged
   - Right axis 1: % Ona involved, % reverts (0-100%)
   - Right axis 2: PRs per engineer, review speed (hrs)
+
+- **Top contributors** (with `--top-contributors N`): Shows the top N contributors ranked by total PR count, with per-contributor before/after Ona PR throughput rates. The split point is each contributor's first Ona-involved PR.
 
 The `--serve` flag starts a local HTTP server with live reload — the browser automatically refreshes when the HTML file changes on disk.
 
@@ -148,6 +153,7 @@ cmd/throughput/
   graphql.go        GraphQL client with retry/rate-limit handling
   fetch.go          Concurrent PR fetching with bounded worker pool
   metrics.go        PR filtering, cycle time, review turnaround, percentiles
+  contributors.go   Per-contributor before/after Ona analysis
   csv.go            Weekly aggregation and CSV output
   monthly.go        Monthly aggregation of weekly stats (medians for rates, sums for counts)
   stats.go          Statistical analysis (trend windows, Pearson correlation, Mann-Whitney U)

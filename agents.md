@@ -29,7 +29,7 @@ To run with the interactive chart visualization:
 
 All Go source lives in `cmd/throughput/`:
 
-- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`, `--exclude-bottom-contributor-pct`, `--granularity`, `--compare-window-pct`, `--compare-ona-threshold`.
+- `main.go` — Entry point, CLI flag parsing, week range computation, orchestration. Flags: `--repo`, `--branch`, `--weeks`, `--output`, `--exclude`, `--stats-output`, `--html`, `--serve`, `--port`, `--min-prs`, `--exclude-bottom-contributor-pct`, `--granularity`, `--compare-window-pct`, `--compare-ona-threshold`, `--top-contributors`.
 - `monthly.go` — Aggregates weekly stats into calendar months. Uses medians for rate metrics (PRs/engineer, review speed, Ona %, revert %) and sums for counts (PRs merged). Drops the last incomplete month.
 - `token.go` — Resolves GitHub token from env vars or git credential helper.
 - `graphql.go` — GraphQL HTTP client with retry (3 attempts, backoff) and rate-limit handling.
@@ -38,6 +38,7 @@ All Go source lives in `cmd/throughput/`:
 - `csv.go` — Buckets enriched PRs into week ranges and formats CSV output. Also returns `weekStats` for use by stats and HTML generation.
 - `stats.go` — Statistical analysis: trend windows (first 5% vs last 5% of weeks), Pearson correlation, Mann-Whitney U test. Returns `consolidatedRow` structs used by both the stats CSV and the HTML summary cards.
 - `html.go` — Generates a self-contained HTML file with Chart.js. Includes summary stat cards (before/after with % change), quarterly averages table, and a dual-axis line chart.
+- `contributors.go` — Per-contributor before/after Ona analysis. Ranks authors by total PR count, splits each author's PRs at their first Ona-involved PR, computes PRs/active-week for each period.
 - `serve.go` — Local HTTP server that serves the HTML file with live reload via Server-Sent Events. File watcher uses modtime + size + content hash to detect changes.
 
 ## Key design decisions
@@ -57,6 +58,7 @@ All Go source lives in `cmd/throughput/`:
   - **Review speed** (`reviewSpeedHours`): PR opened (`createdAt`) to merged (`mergedAt`). This is the primary metric, used in stats analysis, HTML stat cards, chart, and quarterly table. Matches GetDX's "cycle time" definition.
   - **Commit-to-merge** (`cycleTimeHours`): First commit `authoredDate` to merged. Present in CSV only (`median_commit_to_merge_hours`, `p90_commit_to_merge_hours`). **Does not work for repos using squash-and-merge** — squash merging replaces all branch commits with a single commit whose `authoredDate` is set at squash time (near merge time), making this metric nearly identical to review speed. Only meaningful for repos using merge commits that preserve original commit history.
 - **Draft PR exclusion**: Draft PRs (`isDraft == true`) are excluded from all metrics. This matches GetDX's behavior and avoids inflating cycle times with WIP PRs that were opened early.
+- **Top contributors**: `--top-contributors N` shows the top N contributors by total PR count in the HTML visualization, with before/after Ona PR throughput rates. The before/after split is per-contributor, based on the merge date of their first Ona-involved PR. PR/week is computed as total PRs / active weeks (weeks with at least one PR) in each period. Disabled by default (0). Stat card colors are context-aware: review speed and revert increases are red, all other metric increases are green.
 
 ## Testing changes
 
