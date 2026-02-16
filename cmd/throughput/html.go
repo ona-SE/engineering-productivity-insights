@@ -12,6 +12,8 @@ type htmlData struct {
 	FilterNotes  []string
 	Weeks        []htmlWeek
 	Stats        []htmlStat
+	Categories   []htmlCategory
+	ActivityLine []htmlActivity
 	Contributors []htmlContributor
 }
 
@@ -96,18 +98,6 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		"build_success_pct": {label: "Build success", unit: "%", category: "activity"},
 	}
 
-	// Category definitions in display order
-	type catDef struct {
-		name  string
-		accent string
-		tint   string
-	}
-	catOrder := []catDef{
-		{name: "Speed", accent: "#2563eb", tint: "#f0f4ff"},
-		{name: "Quality", accent: "#16a34a", tint: "#f0fdf4"},
-		{name: "Ona Uptake", accent: "#9333ea", tint: "#faf5ff"},
-	}
-
 	// Compute window description from the first summary row
 	if len(summaryRows) > 0 && len(weeks) > 0 {
 		r := summaryRows[0]
@@ -129,8 +119,19 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		}
 	}
 
-	// Route metrics into categories and activity line
+	// Category definitions in display order
+	type catDef struct {
+		name   string
+		accent string
+		tint   string
+	}
+	catOrder := []catDef{
+		{name: "Speed", accent: "#2563eb", tint: "#f0f4ff"},
+		{name: "Quality", accent: "#16a34a", tint: "#f0fdf4"},
+		{name: "Ona Uptake", accent: "#9333ea", tint: "#faf5ff"},
+	}
 	catStats := make(map[string][]htmlStat)
+
 	for _, r := range summaryRows {
 		cfg, ok := metricCfg[r.metric]
 		if !ok {
@@ -143,20 +144,45 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			firstAvg += cfg.unit
 			lastAvg += cfg.unit
 		}
-		// For review speed and reverts, an increase is bad (invert color).
+		// For inverted metrics (review speed, reverts), a decrease is good.
 		isGood := r.absChange >= 0
-		if r.metric == "median_review_speed_hours" || r.metric == "pct_reverts" {
+		if cfg.invertColor {
 			isGood = r.absChange <= 0
 		}
 
-		data.Stats = append(data.Stats, htmlStat{
-			Label:     label,
-			FirstAvg:  firstAvg,
-			LastAvg:   lastAvg,
-			IsUp:      isGood,
-			PctChange: r.pctChange,
-			Unit:      unit,
-		})
+		stat := htmlStat{
+			Label:       cfg.label,
+			FirstAvg:    firstAvg,
+			LastAvg:     lastAvg,
+			IsPositive:  isGood,
+			PctChange:   r.pctChange,
+			Unit:        cfg.unit,
+			InvertColor: cfg.invertColor,
+		}
+
+		if cfg.category == "activity" {
+			data.ActivityLine = append(data.ActivityLine, htmlActivity{
+				Label:     cfg.label,
+				FirstAvg:  firstAvg,
+				LastAvg:   lastAvg,
+				PctChange: r.pctChange,
+				IsUp:      r.absChange >= 0,
+			})
+		} else {
+			catStats[cfg.category] = append(catStats[cfg.category], stat)
+		}
+		data.Stats = append(data.Stats, stat)
+	}
+
+	for _, c := range catOrder {
+		if stats, ok := catStats[c.name]; ok {
+			data.Categories = append(data.Categories, htmlCategory{
+				Name:        c.name,
+				AccentColor: c.accent,
+				TintColor:   c.tint,
+				Stats:       stats,
+			})
+		}
 	}
 
 	for _, c := range topContributors {
@@ -324,22 +350,11 @@ new Chart(document.getElementById("chart"), {
     labels: labels,
     datasets: [
       {
-        label: "PRs Merged",
-        data: weeks.map(w => w.prsMerged),
-        borderColor: "#6b7280",
-        backgroundColor: "rgba(107,114,128,0.1)",
-        yAxisID: "y",
-        tension: 0.3,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        hidden: true
-      },
-      {
         label: "PRs per Engineer",
         data: weeks.map(w => w.prsPerEngineer),
         borderColor: "#2563eb",
         backgroundColor: "rgba(37,99,235,0.1)",
-        yAxisID: "y2",
+        yAxisID: "yPPE",
         tension: 0.3,
         pointRadius: 4,
         pointHoverRadius: 6
@@ -349,7 +364,7 @@ new Chart(document.getElementById("chart"), {
         data: trendData,
         borderColor: "rgba(37,99,235,0.5)",
         backgroundColor: "transparent",
-        yAxisID: "y2",
+        yAxisID: "yPPE",
         borderDash: [6, 4],
         borderWidth: 2,
         pointRadius: 0,
@@ -357,22 +372,11 @@ new Chart(document.getElementById("chart"), {
         tension: 0
       },
       {
-        label: "Review Speed (hrs)",
-        data: weeks.map(w => w.reviewSpeed),
-        borderColor: "#ea580c",
-        backgroundColor: "rgba(234,88,12,0.1)",
-        yAxisID: "y2",
-        tension: 0.3,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        hidden: true
-      },
-      {
         label: "% Ona Involved",
         data: weeks.map(w => w.pctOna),
         borderColor: "#9333ea",
         backgroundColor: "rgba(147,51,234,0.1)",
-        yAxisID: "y1",
+        yAxisID: "yPct",
         tension: 0.3,
         borderDash: [6, 3],
         pointRadius: 4,
@@ -383,18 +387,40 @@ new Chart(document.getElementById("chart"), {
         data: weeks.map(w => w.pctReverts),
         borderColor: "#16a34a",
         backgroundColor: "rgba(22,163,74,0.1)",
-        yAxisID: "y1",
+        yAxisID: "yPct",
         tension: 0.3,
         borderDash: [6, 3],
         pointRadius: 4,
         pointHoverRadius: 6
       },
       {
+        label: "Review Speed (hrs)",
+        data: weeks.map(w => w.reviewSpeed),
+        borderColor: "#ea580c",
+        backgroundColor: "rgba(234,88,12,0.1)",
+        yAxisID: "yHrs",
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
+      },
+      {
+        label: "PRs Merged",
+        data: weeks.map(w => w.prsMerged),
+        borderColor: "#6b7280",
+        backgroundColor: "rgba(107,114,128,0.1)",
+        yAxisID: "yCount",
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
+      },
+      {
         label: "Builds",
         data: weeks.map(w => w.buildRuns),
         borderColor: "#f59e0b",
         backgroundColor: "rgba(245,158,11,0.1)",
-        yAxisID: "y3",
+        yAxisID: "yBuilds",
         tension: 0.3,
         pointRadius: 4,
         pointHoverRadius: 6,
@@ -413,11 +439,12 @@ new Chart(document.getElementById("chart"), {
         callbacks: {
           label: function(ctx) {
             let v = ctx.parsed.y;
-            if (ctx.dataset.yAxisID === "y1") return ctx.dataset.label + ": " + v.toFixed(1) + "%";
-            if (ctx.dataset.yAxisID === "y2") return ctx.dataset.label + ": " + v.toFixed(2);
-            if (ctx.dataset.yAxisID === "y3") return ctx.dataset.label + ": " + v.toLocaleString();
-            if (ctx.dataset.label === "PRs Merged") return ctx.dataset.label + ": " + v;
-            return ctx.dataset.label + ": " + v.toFixed(2);
+            let lbl = ctx.dataset.label;
+            let axis = ctx.dataset.yAxisID;
+            if (axis === "yPct") return lbl + ": " + v.toFixed(1) + "%";
+            if (axis === "yHrs") return lbl + ": " + v.toFixed(1) + "h";
+            if (axis === "yCount" || axis === "yBuilds") return lbl + ": " + v.toLocaleString();
+            return lbl + ": " + v.toFixed(2);
           }
         }
       },
@@ -431,31 +458,44 @@ new Chart(document.getElementById("chart"), {
         title: { display: true, text: "Week Starting" },
         ticks: { maxRotation: 45 }
       },
-      y: {
+      yPPE: {
         type: "linear",
         position: "left",
-        title: { display: true, text: "PRs Merged" },
+        title: { display: true, text: "PRs / Engineer" },
         beginAtZero: true,
         grid: { color: "rgba(0,0,0,0.06)" }
       },
-      y1: {
+      yPct: {
         type: "linear",
         position: "right",
-        title: { display: true, text: "Percentage (%)" },
+        weight: 1,
+        title: { display: true, text: "%" },
         min: 0,
         max: 100,
         grid: { drawOnChartArea: false }
       },
-      y2: {
+      yHrs: {
         type: "linear",
         position: "right",
-        title: { display: true, text: "PRs/Engineer · Review Speed (hrs)" },
+        weight: 2,
+        display: false,
+        title: { display: true, text: "Hours" },
         beginAtZero: true,
         grid: { drawOnChartArea: false }
       },
-      y3: {
+      yCount: {
         type: "linear",
-        position: "left",
+        position: "right",
+        weight: 3,
+        display: false,
+        title: { display: true, text: "PRs Merged" },
+        beginAtZero: true,
+        grid: { drawOnChartArea: false }
+      },
+      yBuilds: {
+        type: "linear",
+        position: "right",
+        weight: 4,
         display: false,
         title: { display: true, text: "Builds" },
         beginAtZero: true,
@@ -464,13 +504,20 @@ new Chart(document.getElementById("chart"), {
     }
   },
   plugins: [{
-    // Show/hide y3 axis when Builds dataset is toggled
-    id: "y3Toggle",
-    afterUpdate(chart) {
-      const ds = chart.data.datasets.find(d => d.yAxisID === "y3");
-      if (ds && chart.scales.y3) {
-        const meta = chart.getDatasetMeta(chart.data.datasets.indexOf(ds));
-        chart.scales.y3.options.display = !meta.hidden;
+    id: "axisToggle",
+    beforeLayout(chart) {
+      const axisIds = ["yPPE", "yPct", "yHrs", "yCount", "yBuilds"];
+      for (const axisId of axisIds) {
+        const scale = chart.options.scales[axisId];
+        if (!scale) continue;
+        let anyVisible = false;
+        chart.data.datasets.forEach((ds, i) => {
+          if (ds.yAxisID === axisId) {
+            const meta = chart.getDatasetMeta(i);
+            if (!meta.hidden && ds.hidden !== true) anyVisible = true;
+          }
+        });
+        scale.display = anyVisible;
       }
     }
   }]
