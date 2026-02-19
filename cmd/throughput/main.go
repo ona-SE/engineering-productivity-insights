@@ -38,6 +38,7 @@ func main() {
 	compareWindowPct := flag.Int("compare-window-pct", 5, "compare first/last N% of weeks (1-49, default 5)")
 	compareOnaThreshold := flag.Float64("compare-ona-threshold", 0, "compare weeks below vs above N% Ona usage (e.g. 70)")
 	topN := flag.Int("top-contributors", 0, "show top N contributors with before/after Ona PR rates in HTML (0 = disabled)")
+	cycleTime := flag.Bool("cycle-time", false, "include commit-to-merge cycle time in stats, chart, and stat cards")
 	flag.Parse()
 
 	if *granularity != "weekly" && *granularity != "monthly" {
@@ -103,6 +104,11 @@ func main() {
 	// Fetch PRs concurrently
 	fmt.Fprintf(os.Stderr, "Fetching merged PRs via GraphQL...\n")
 	allPRs := fetchAllPRs(cfg, weekRanges)
+
+	// Backfill first commit for large PRs when cycle time is enabled
+	if *cycleTime {
+		backfillFirstCommits(cfg, allPRs)
+	}
 
 	// Filter and compute metrics
 	fmt.Fprintf(os.Stderr, "Processing PRs...\n")
@@ -288,7 +294,7 @@ func main() {
 	if *granularity == "monthly" {
 		periodLabel = "month"
 	}
-	statsCSV, statsRows := generateStats(chartStats, *compareWindowPct, *compareOnaThreshold, periodLabel)
+	statsCSV, statsRows := generateStats(chartStats, *compareWindowPct, *compareOnaThreshold, periodLabel, *cycleTime)
 
 	if *statsOutput != "" {
 		if statsCSV != "" {
@@ -315,7 +321,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Generating HTML chart...\n")
 		period := *granularity
 		title := fmt.Sprintf("%s/%s — %s to %s (%s)", cfg.owner, cfg.repo, startDate, today, period)
-		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel, filterNotes, topContributors)
+		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel, filterNotes, topContributors, *cycleTime)
 		if err != nil {
 			fatal("Failed to generate HTML: %v", err)
 		}

@@ -6,15 +6,15 @@ import (
 	"time"
 )
 
-const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_review_speed_hours,p90_review_speed_hours,median_commit_to_merge_hours,p90_commit_to_merge_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
+const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_coding_time_hours,p90_coding_time_hours,median_review_time_hours,p90_review_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
 
 // weekStats holds the computed per-week values needed by the stats analysis.
 type weekStats struct {
 	prsMerged            int
 	uniqueAuthors        int
 	prsPerEngineer       float64
-	medianReviewSpeed    float64 // PR opened to merge; -1 if no data
-	medianCycleTime      float64 // first commit to merge (unreliable with squash merges); -1 if no data
+	medianCodingTime     float64 // first commit to ready-for-review; -1 if no data
+	medianReviewTime     float64 // ready-for-review to merged; -1 if no data
 	pctOnaInvolved       float64
 	pctReverts           float64
 	buildRuns            int
@@ -46,9 +46,9 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 		files            int
 		onaCount         int
 		revertCount      int
-		reviewSpeeds     []float64 // PR opened to merge
-		cycleTimes       []float64 // first commit to merge
-		reviewTimes      []float64
+		codingTimes      []float64 // first commit to ready-for-review
+		reviewTimes      []float64 // ready-for-review to merged
+		turnaroundTimes  []float64 // PR created to first review
 		authors          map[string]bool
 	}
 	buckets := make([]weekBucket, len(weeks))
@@ -70,14 +70,14 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 				if pr.isRevert {
 					buckets[i].revertCount++
 				}
-				if pr.reviewSpeedHours >= 0 {
-					buckets[i].reviewSpeeds = append(buckets[i].reviewSpeeds, pr.reviewSpeedHours)
+				if pr.codingTimeHours >= 0 {
+					buckets[i].codingTimes = append(buckets[i].codingTimes, pr.codingTimeHours)
 				}
-				if pr.cycleTimeHours >= 0 {
-					buckets[i].cycleTimes = append(buckets[i].cycleTimes, pr.cycleTimeHours)
+				if pr.reviewTimeHours >= 0 {
+					buckets[i].reviewTimes = append(buckets[i].reviewTimes, pr.reviewTimeHours)
 				}
 				if pr.reviewTurnaround >= 0 {
-					buckets[i].reviewTimes = append(buckets[i].reviewTimes, pr.reviewTurnaround)
+					buckets[i].turnaroundTimes = append(buckets[i].turnaroundTimes, pr.reviewTurnaround)
 				}
 				break
 			}
@@ -102,12 +102,12 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 			prsPerEng = float64(b.count) / float64(uniqueAuthors)
 		}
 
-		medReviewSpeed := formatPercentile(median(b.reviewSpeeds))
-		p90ReviewSpeed := formatPercentile(p90(b.reviewSpeeds))
-		medCycle := formatPercentile(median(b.cycleTimes))
-		p90Cycle := formatPercentile(p90(b.cycleTimes))
-		medReview := formatPercentile(median(b.reviewTimes))
-		p90Review := formatPercentile(p90(b.reviewTimes))
+		medCoding := formatPercentile(median(b.codingTimes))
+		p90Coding := formatPercentile(p90(b.codingTimes))
+		medReviewTime := formatPercentile(median(b.reviewTimes))
+		p90ReviewTime := formatPercentile(p90(b.reviewTimes))
+		medTurnaround := formatPercentile(median(b.turnaroundTimes))
+		p90Turnaround := formatPercentile(p90(b.turnaroundTimes))
 
 		var avgSize string
 		var pctOna float64
@@ -123,16 +123,16 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
 			ws, we, b.count, uniqueAuthors, prsPerEng,
 			b.additions, b.deletions, b.files,
-			medReviewSpeed, p90ReviewSpeed, medCycle, p90Cycle,
-			medReview, p90Review, avgSize, pctOna,
+			medCoding, p90Coding, medReviewTime, p90ReviewTime,
+			medTurnaround, p90Turnaround, avgSize, pctOna,
 			b.revertCount, pctReverts)
 
 		allStats[i] = weekStats{
 			prsMerged:         b.count,
 			uniqueAuthors:     uniqueAuthors,
 			prsPerEngineer:    prsPerEng,
-			medianReviewSpeed: median(b.reviewSpeeds),
-			medianCycleTime:   median(b.cycleTimes),
+			medianCodingTime:  median(b.codingTimes),
+			medianReviewTime:  median(b.reviewTimes),
 			pctOnaInvolved:    pctOna,
 			pctReverts:        pctReverts,
 		}

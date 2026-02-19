@@ -35,11 +35,6 @@ var allMetrics = []metricDef{
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
 	},
 	{
-		name:    "median_review_speed_hours",
-		extract: func(ws weekStats) float64 { return ws.medianReviewSpeed },
-		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 && ws.medianReviewSpeed >= 0 },
-	},
-	{
 		name:    "pct_reverts",
 		extract: func(ws weekStats) float64 { return ws.pctReverts },
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
@@ -89,7 +84,7 @@ const consolidatedHeader = "metric,n,first_avg,last_avg,abs_change,pct_change,wi
 
 // generateStats produces the consolidated 6-row stats CSV.
 // It returns both the CSV string and the parsed rows for use by the HTML generator.
-func generateStats(allStats []weekStats, windowPct int, onaThreshold float64, periodLabel string) (string, []consolidatedRow) {
+func generateStats(allStats []weekStats, windowPct int, onaThreshold float64, periodLabel string, includeCycleTime bool) (string, []consolidatedRow) {
 	// Compute overall average PRs/week (across all non-zero weeks)
 	var totalPRs int
 	var nonZeroCount int
@@ -131,9 +126,26 @@ func generateStats(allStats []weekStats, windowPct int, onaThreshold float64, pe
 		onaVals[i] = extractOna(ws)
 	}
 
+	// Build metrics list, conditionally including coding/review time
+	metrics := allMetrics
+	if includeCycleTime {
+		metrics = append(metrics,
+			metricDef{
+				name:    "median_coding_time_hours",
+				extract: func(ws weekStats) float64 { return ws.medianCodingTime },
+				valid:   func(ws weekStats) bool { return ws.prsMerged > 0 && ws.medianCodingTime >= 0 },
+			},
+			metricDef{
+				name:    "median_review_time_hours",
+				extract: func(ws weekStats) float64 { return ws.medianReviewTime },
+				valid:   func(ws weekStats) bool { return ws.prsMerged > 0 && ws.medianReviewTime >= 0 },
+			},
+		)
+	}
+
 	var rows []consolidatedRow
 
-	for _, md := range allMetrics {
+	for _, md := range metrics {
 		row := buildRow(md, valid, onaVals, windowPct, onaThreshold, periodLabel)
 		if row != nil {
 			rows = append(rows, *row)
@@ -203,8 +215,15 @@ func buildRow(md metricDef, valid []weekStats, onaVals []float64, windowPct int,
 			sign = ""
 		}
 		pctChange = fmt.Sprintf("%s%.1f%%", sign, pct)
+	} else if lastAvg != 0 {
+		// Starting from 0: show absolute change (e.g. "0 → 45.2" displays as "+45.2")
+		sign := "+"
+		if absChange < 0 {
+			sign = ""
+		}
+		pctChange = fmt.Sprintf("%s%.1f", sign, absChange)
 	} else {
-		pctChange = "N/A"
+		pctChange = "0.0%"
 	}
 
 	// Extract metric values aligned with valid weeks

@@ -7,31 +7,34 @@ import (
 )
 
 type htmlData struct {
-	Title        string
-	WindowDesc   string
-	FilterNotes  []string
-	Weeks        []htmlWeek
-	Stats        []htmlStat
-	Categories   []htmlCategory
-	ActivityLine []htmlActivity
-	Contributors []htmlContributor
+	Title            string
+	WindowDesc       string
+	FilterNotes      []string
+	Weeks            []htmlWeek
+	Stats            []htmlStat
+	Categories       []htmlCategory
+	ActivityLine     []htmlActivity
+	Contributors     []htmlContributor
+	IncludeCycleTime bool
 }
 
 type htmlWeek struct {
-	WeekStart         string
-	PRsMerged         int
-	PRsPerEngineer    float64
-	MedianReviewSpeed float64
-	PctOnaInvolved    float64
-	PctReverts        float64
-	BuildRuns         int
+	WeekStart        string
+	PRsMerged        int
+	PRsPerEngineer   float64
+	MedianCodingTime float64
+	MedianReviewTime float64
+	PctOnaInvolved   float64
+	PctReverts       float64
+	BuildRuns        int
 }
 
 type htmlCategory struct {
-	Name        string // e.g. "Speed"
-	AccentColor string // e.g. "#2563eb"
-	TintColor   string // e.g. "rgba(37,99,235,0.06)"
-	Stats       []htmlStat
+	Name           string // e.g. "Speed"
+	AccentColor    string // e.g. "#2563eb"
+	TintColor      string // e.g. "rgba(37,99,235,0.06)"
+	Stats          []htmlStat
+	CycleTimeStats []htmlStat // second row: coding time | review time
 }
 
 type htmlStat struct {
@@ -62,22 +65,27 @@ type htmlContributor struct {
 	HasOnaPRs  bool
 }
 
-func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string, topContributors []contributorStat) (string, error) {
-	data := htmlData{Title: title, FilterNotes: filterNotes}
+func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string, topContributors []contributorStat, includeCycleTime bool) (string, error) {
+	data := htmlData{Title: title, FilterNotes: filterNotes, IncludeCycleTime: includeCycleTime}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
-		rs := s.medianReviewSpeed
-		if rs < 0 {
-			rs = 0
+		ct := s.medianCodingTime
+		if ct < 0 {
+			ct = 0
+		}
+		rt := s.medianReviewTime
+		if rt < 0 {
+			rt = 0
 		}
 		data.Weeks = append(data.Weeks, htmlWeek{
-			WeekStart:         wr.start.Format("2006-01-02"),
-			PRsMerged:         s.prsMerged,
-			PRsPerEngineer:    s.prsPerEngineer,
-			MedianReviewSpeed: rs,
-			PctOnaInvolved:    s.pctOnaInvolved,
-			PctReverts:        s.pctReverts,
-			BuildRuns:         s.buildRuns,
+			WeekStart:        wr.start.Format("2006-01-02"),
+			PRsMerged:        s.prsMerged,
+			PRsPerEngineer:   s.prsPerEngineer,
+			MedianCodingTime: ct,
+			MedianReviewTime: rt,
+			PctOnaInvolved:   s.pctOnaInvolved,
+			PctReverts:       s.pctReverts,
+			BuildRuns:        s.buildRuns,
 		})
 	}
 
@@ -89,13 +97,17 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		invertColor bool   // true = lower is better
 	}
 	metricCfg := map[string]metricConfig{
-		"prs_per_engineer": {label: "PRs / Engineer", unit: "", category: "Speed", invertColor: false},
+		"prs_per_engineer": {label: "Median PRs / Engineer", unit: "", category: "Speed", invertColor: false},
 		"pct_reverts":      {label: "Reverts", unit: "%", category: "Quality", invertColor: true},
 		"pct_ona_involved": {label: "Ona Involved", unit: "%", category: "Ona Uptake", invertColor: false},
 		"prs_merged":        {label: "PRs merged", unit: "", category: "activity"},
 		"unique_authors":    {label: "Unique authors", unit: "", category: "activity"},
 		"build_runs":        {label: "Builds", unit: "", category: "activity"},
 		"build_success_pct": {label: "Build success", unit: "%", category: "activity"},
+	}
+	if includeCycleTime {
+		metricCfg["median_coding_time_hours"] = metricConfig{label: "Median Time Spent Coding", unit: "hrs", category: "Cycle Time", invertColor: true}
+		metricCfg["median_review_time_hours"] = metricConfig{label: "Median Time Spent Reviewing", unit: "hrs", category: "Cycle Time", invertColor: true}
 	}
 
 	// Compute window description from the first summary row
@@ -135,7 +147,7 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 	for _, r := range summaryRows {
 		cfg, ok := metricCfg[r.metric]
 		if !ok {
-			continue // skip median_review_speed_hours and any unknown metrics
+			continue // skip unknown metrics
 		}
 
 		firstAvg := fmt.Sprintf("%.1f", r.firstAvg)
@@ -175,14 +187,21 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 	}
 
 	for _, c := range catOrder {
-		if stats, ok := catStats[c.name]; ok {
-			data.Categories = append(data.Categories, htmlCategory{
-				Name:        c.name,
-				AccentColor: c.accent,
-				TintColor:   c.tint,
-				Stats:       stats,
-			})
+		stats, hasStats := catStats[c.name]
+		ctStats := catStats["Cycle Time"] // attach to Speed category
+		if !hasStats && (c.name != "Speed" || len(ctStats) == 0) {
+			continue
 		}
+		cat := htmlCategory{
+			Name:        c.name,
+			AccentColor: c.accent,
+			TintColor:   c.tint,
+			Stats:       stats,
+		}
+		if c.name == "Speed" {
+			cat.CycleTimeStats = ctStats
+		}
+		data.Categories = append(data.Categories, cat)
 	}
 
 	for _, c := range topContributors {
@@ -233,9 +252,14 @@ const htmlTemplate = `<!DOCTYPE html>
   .filter-notes .filter-title { font-weight: 600; color: #374151; }
   .window-desc { font-size: 0.85rem; color: #6b7280; text-align: center; margin-bottom: 16px; }
 
-  .banner-strip { display: flex; align-items: center; gap: 16px; border-radius: 8px; padding: 16px 20px; margin-bottom: 10px; border-left: 5px solid; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .banner-strip { display: flex; align-items: center; gap: 20px; border-radius: 8px; padding: 16px 20px; margin-bottom: 10px; border-left: 5px solid; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .banner-rows { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .banner-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .banner-sep { color: #d1d5db; font-size: 1.2rem; font-weight: 300; margin: 0 4px; }
+  .banner-sublabel { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; }
   .banner-category { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; min-width: 90px; }
-  .banner-metric { font-size: 0.9rem; color: #374151; min-width: 120px; }
+  .banner-metric { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; min-width: 120px; }
+  .banner-metric-sub { font-size: 0.7rem; font-weight: 400; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; min-width: 120px; }
   .banner-pct { font-size: 1.5rem; font-weight: 700; }
   .banner-pct.positive { color: #16a34a; }
   .banner-pct.negative { color: #dc2626; }
@@ -264,6 +288,17 @@ const htmlTemplate = `<!DOCTYPE html>
   .contrib-pct.up { color: #16a34a; }
   .contrib-pct.down { color: #dc2626; }
   .contrib-pct.neutral { color: #9ca3af; }
+
+  .metric-defs { margin-top: 24px; }
+  .metric-defs summary { font-size: 0.95rem; font-weight: 600; color: #374151; cursor: pointer; padding: 12px 0; }
+  .metric-defs summary:hover { color: #1a1a2e; }
+  .metric-defs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; margin-top: 12px; }
+  .metric-def-card { background: #fff; border-radius: 8px; padding: 16px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border-left: 4px solid #d1d5db; }
+  .metric-def-card h3 { font-size: 0.9rem; font-weight: 600; color: #1a1a2e; margin-bottom: 6px; }
+  .metric-def-card p { font-size: 0.82rem; color: #4b5563; line-height: 1.5; margin-bottom: 6px; }
+  .metric-def-card .def-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; margin-bottom: 2px; }
+  .metric-def-card .def-good { color: #16a34a; }
+  .metric-def-card .def-warn { color: #b45309; }
 </style>
 </head>
 <body>
@@ -282,11 +317,25 @@ const htmlTemplate = `<!DOCTYPE html>
   {{range .Categories}}
   <div class="banner-strip" style="border-left-color: {{.AccentColor}}; background: {{.TintColor}};">
     <span class="banner-category" style="color: {{.AccentColor}};">{{.Name}}</span>
-    {{range .Stats}}
-    <span class="banner-metric">{{.Label}}</span>
-    <span class="banner-pct {{if .IsPositive}}positive{{else}}negative{{end}}">{{.PctChange}}</span>
-    <span class="banner-detail">{{.FirstAvg}} <span class="banner-arrow">&rarr;</span> {{.LastAvg}}</span>
-    {{end}}
+    <div class="banner-rows">
+      <div class="banner-row">
+        {{range $i, $s := .Stats}}{{if $i}}<span class="banner-sep">|</span>{{end}}
+        <span class="banner-metric">{{$s.Label}}</span>
+        <span class="banner-pct {{if $s.IsPositive}}positive{{else}}negative{{end}}">{{$s.PctChange}}</span>
+        <span class="banner-detail">{{$s.FirstAvg}} <span class="banner-arrow">&rarr;</span> {{$s.LastAvg}}</span>
+        {{end}}
+      </div>
+      {{if .CycleTimeStats}}
+      <div class="banner-row">
+        <span class="banner-sublabel">Cycle Time:</span>
+        {{range $i, $s := .CycleTimeStats}}{{if $i}}<span class="banner-sep">|</span>{{end}}
+        <span class="banner-metric-sub">{{$s.Label}}</span>
+        <span class="banner-pct {{if $s.IsPositive}}positive{{else}}negative{{end}}">{{$s.PctChange}}</span>
+        <span class="banner-detail">{{$s.FirstAvg}} <span class="banner-arrow">&rarr;</span> {{$s.LastAvg}}</span>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
   </div>
   {{end}}
   {{end}}
@@ -319,13 +368,69 @@ const htmlTemplate = `<!DOCTYPE html>
     </div>
   </div>
   {{end}}
+  <details class="metric-defs">
+    <summary>Metric Definitions</summary>
+    <div class="metric-defs-grid">
+      <div class="metric-def-card">
+        <h3>PRs per Engineer</h3>
+        <p>Merged PRs divided by unique authors in the period. Measures individual throughput normalized by team size.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Controls for team growth — a team doubling in size won't appear twice as productive. Useful for comparing periods with different headcounts.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Doesn't account for PR size or complexity. A week of small refactors scores the same as a week of large features. Infrequent contributors (1 PR) inflate the denominator.</p>
+      </div>
+      <div class="metric-def-card">
+        <h3>% Ona Involved</h3>
+        <p>Percentage of PRs where Ona was a co-author (via <code>Co-authored-by</code> trailer) or the primary author (login prefix <code>ona-</code>).</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Tracks adoption of Ona-assisted development over time. Correlating with other metrics shows whether Ona usage coincides with throughput or quality changes.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Measures presence, not impact. A PR with a trivial Ona contribution counts the same as one where Ona wrote most of the code. Relies on the co-author trailer being present.</p>
+      </div>
+      <div class="metric-def-card">
+        <h3>% Reverts</h3>
+        <p>Percentage of PRs whose title matches revert/rollback patterns. A proxy for code quality and deployment stability.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Captures production issues that required rolling back changes. Trending upward may signal quality regression or insufficient testing.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Title-based detection only — misses reverts with non-standard titles and may false-positive on PRs that mention "revert" without being one. Doesn't distinguish severity.</p>
+      </div>
+      {{if .IncludeCycleTime}}
+      <div class="metric-def-card">
+        <h3>Coding Time</h3>
+        <p>Time from first commit (<code>authoredDate</code>) to when the PR was marked ready for review (<code>ReadyForReviewEvent</code>). Measures pre-review development duration.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Isolates the development phase from the review phase. Helps identify whether slowdowns are in coding or review. Not inflated by review wait times.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Only computed for PRs that were created as drafts and later marked ready. Non-draft PRs are excluded. Rebased or amended commits may shift the first commit timestamp. Median can be low if most PRs are opened shortly after the first commit.</p>
+      </div>
+      <div class="metric-def-card">
+        <h3>Review Time</h3>
+        <p>Time from when the PR was marked ready for review (<code>ReadyForReviewEvent</code>) to merged. Measures how long PRs spend in code review.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Directly measures review bottlenecks. High review time may indicate reviewer availability issues, large PRs, or complex changes requiring multiple review rounds.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Only computed for PRs that were created as drafts. Includes time the author spends addressing feedback, not just reviewer wait time. Doesn't distinguish between active review and idle waiting.</p>
+      </div>
+      {{end}}
+      <div class="metric-def-card">
+        <h3>PRs Merged</h3>
+        <p>Total number of merged (non-draft, non-bot) pull requests per period. Raw volume metric.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Simple, unambiguous count. Useful for spotting holidays, freezes, or unusual activity spikes.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Not normalized by team size. Conflates small fixes with large features. Higher isn't necessarily better — could indicate PR splitting or churn.</p>
+      </div>
+    </div>
+  </details>
 </div>
 <script>
 const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
   week: "{{$w.WeekStart}}",
   prsMerged: {{$w.PRsMerged}},
   prsPerEngineer: {{$w.PRsPerEngineer}},
-  reviewSpeed: {{$w.MedianReviewSpeed}},
+  codingTime: {{$w.MedianCodingTime}},
+  reviewTime: {{$w.MedianReviewTime}},
   pctOna: {{$w.PctOnaInvolved}},
   pctReverts: {{$w.PctReverts}},
   buildRuns: {{$w.BuildRuns}}
@@ -393,9 +498,21 @@ new Chart(document.getElementById("chart"), {
         pointRadius: 4,
         pointHoverRadius: 6
       },
+      {{if .IncludeCycleTime}}{
+        label: "Time Spent Coding (hrs)",
+        data: weeks.map(w => w.codingTime),
+        borderColor: "#0891b2",
+        backgroundColor: "rgba(8,145,178,0.1)",
+        yAxisID: "yHrs",
+        tension: 0.3,
+        borderDash: [6, 3],
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
+      },
       {
-        label: "Review Speed (hrs)",
-        data: weeks.map(w => w.reviewSpeed),
+        label: "Time Spent Reviewing (hrs)",
+        data: weeks.map(w => w.reviewTime),
         borderColor: "#ea580c",
         backgroundColor: "rgba(234,88,12,0.1)",
         yAxisID: "yHrs",
@@ -403,7 +520,7 @@ new Chart(document.getElementById("chart"), {
         pointRadius: 4,
         pointHoverRadius: 6,
         hidden: true
-      },
+      },{{end}}
       {
         label: "PRs Merged",
         data: weeks.map(w => w.prsMerged),
