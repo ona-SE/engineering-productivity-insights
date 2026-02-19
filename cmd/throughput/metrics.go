@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var onaCoauthorRe = regexp.MustCompile(`(?i)Co-authored-by:.*[Oo]na.*@ona\.com`)
@@ -13,9 +14,9 @@ var revertRe = regexp.MustCompile(`(?i)\b(revert|reverting|rollback|roll\s+back|
 // enrichedPR holds a PR with computed metrics.
 type enrichedPR struct {
 	mergedEpoch          int64
-	cycleTimeHours       float64 // first commit to merge (unreliable with squash merges); -1 means not available
-	reviewSpeedHours     float64 // PR opened to merge; -1 means not available
-	reviewTurnaround     float64 // -1 means not available
+	codingTimeHours      float64 // first commit to ready-for-review; -1 means not available
+	reviewTimeHours      float64 // ready-for-review to merged; -1 means not available
+	reviewTurnaround     float64 // PR created to first review submitted; -1 means not available
 	additions            int
 	deletions            int
 	changedFiles         int
@@ -54,34 +55,57 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 		mergedEpoch := pr.MergedAt.Unix()
 		createdEpoch := pr.CreatedAt.Unix()
 
-		// Cycle time: first commit authored date to merged
-		cycleHours := -1.0
-		if len(pr.Commits.Nodes) > 0 {
-			firstCommitTime := pr.Commits.Nodes[0].Commit.AuthoredDate
-			if !firstCommitTime.IsZero() {
-				fcEpoch := firstCommitTime.Unix()
-				if mergedEpoch >= fcEpoch {
-					cycleHours = float64(mergedEpoch-fcEpoch) / 3600.0
-					// Match bash: * 100 | round / 100
-					cycleHours = math.Round(cycleHours*100) / 100
+		// Determine ready-for-review timestamp.
+		// PRs that were drafts have a ReadyForReviewEvent in timelineItems.
+		// PRs that were never drafts have no event — coding/review time
+		// are set to -1 (not available) for those.
+		var readyForReviewEpoch int64
+		hasReadyEvent := len(pr.TimelineItems.Nodes) > 0 && pr.TimelineItems.Nodes[0].CreatedAt != nil
+		if hasReadyEvent {
+			readyForReviewEpoch = pr.TimelineItems.Nodes[0].CreatedAt.Unix()
+		}
+
+		// Coding time: earliest commit → ready-for-review.
+		// Review time: ready-for-review → merged.
+		// Both only available for PRs with a ReadyForReviewEvent.
+		codingHours := -1.0
+		reviewTimeHours := -1.0
+		if hasReadyEvent {
+			// Review time: ready-for-review to merged
+			if mergedEpoch >= readyForReviewEpoch {
+				reviewTimeHours = float64(mergedEpoch-readyForReviewEpoch) / 3600.0
+				reviewTimeHours = math.Round(reviewTimeHours*100) / 100
+			}
+
+			// Coding time: earliest commit to ready-for-review
+			if len(pr.Commits.Nodes) > 0 {
+				var earliest time.Time
+				for _, cn := range pr.Commits.Nodes {
+					ad := cn.Commit.AuthoredDate
+					if !ad.IsZero() && (earliest.IsZero() || ad.Before(earliest)) {
+						earliest = ad
+					}
+				}
+				if !earliest.IsZero() {
+					fcEpoch := earliest.Unix()
+					if readyForReviewEpoch >= fcEpoch {
+						codingHours = float64(readyForReviewEpoch-fcEpoch) / 3600.0
+						codingHours = math.Round(codingHours*100) / 100
+					} else {
+						// Earliest commit postdates ready event (shouldn't happen, but clamp)
+						codingHours = 0
+					}
 				}
 			}
 		}
 
-		// Review speed: PR created to merged (matches GetDX "cycle time" definition)
-		reviewSpeedHours := -1.0
-		if mergedEpoch >= createdEpoch && createdEpoch > 0 {
-			reviewSpeedHours = float64(mergedEpoch-createdEpoch) / 3600.0
-			reviewSpeedHours = math.Round(reviewSpeedHours*100) / 100
-		}
-
 		// Review turnaround: PR created to first review submitted
-		reviewHours := -1.0
+		reviewTurnaroundHours := -1.0
 		if len(pr.Reviews.Nodes) > 0 && pr.Reviews.Nodes[0].SubmittedAt != nil {
 			revEpoch := pr.Reviews.Nodes[0].SubmittedAt.Unix()
 			if revEpoch >= createdEpoch {
-				reviewHours = float64(revEpoch-createdEpoch) / 3600.0
-				reviewHours = math.Round(reviewHours*100) / 100
+				reviewTurnaroundHours = float64(revEpoch-createdEpoch) / 3600.0
+				reviewTurnaroundHours = math.Round(reviewTurnaroundHours*100) / 100
 			}
 		}
 
@@ -100,9 +124,9 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 
 		result = append(result, enrichedPR{
 			mergedEpoch:      mergedEpoch,
-			cycleTimeHours:   cycleHours,
-			reviewSpeedHours: reviewSpeedHours,
-			reviewTurnaround: reviewHours,
+			codingTimeHours:  codingHours,
+			reviewTimeHours:  reviewTimeHours,
+			reviewTurnaround: reviewTurnaroundHours,
 			additions:        pr.Additions,
 			deletions:        pr.Deletions,
 			changedFiles:     pr.ChangedFiles,

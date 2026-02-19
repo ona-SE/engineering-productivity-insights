@@ -39,6 +39,7 @@ go run ./cmd/throughput/ [flags]
 | `--compare-window-pct` | `5` | Compare first/last N% of periods (1-49) |
 | `--compare-ona-threshold` | `0` | Compare periods below vs above N% Ona usage (e.g. 70) |
 | `--top-contributors` | `0` | Show top N contributors with before/after Ona PR rates in HTML (0 = disabled) |
+| `--cycle-time` | `false` | Show coding time (first commit → ready for review) and review time (ready for review → merged) in stats, chart, and stat cards |
 
 `--compare-window-pct` and `--compare-ona-threshold` are mutually exclusive.
 
@@ -68,6 +69,9 @@ go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --top-contribut
 
 # Exclude additional users
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --exclude "staging-bot,test-user"
+
+# Show coding time and review time breakdown in stats and chart
+go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --cycle-time --serve
 ```
 
 ### Building a binary (optional)
@@ -128,12 +132,18 @@ The CSV contains one row per week with these columns:
 
 ### Cycle time metrics
 
-The tool computes two cycle time metrics:
+When `--cycle-time` is enabled, the tool splits the development cycle into two phases using the `ReadyForReviewEvent` from the GitHub GraphQL API:
 
-- **Review speed** (`median_review_speed_hours`) — time from PR opened to merged. This is the primary metric used in the stats analysis, HTML stat cards, chart, and quarterly table. Matches GetDX's "cycle time" definition.
-- **Commit-to-merge** (`median_commit_to_merge_hours`) — time from first commit `authoredDate` to merged. Included in CSV output only. **Does not work for repos using squash-and-merge.** Squash merging replaces all branch commits with a single commit whose `authoredDate` is set at squash time (near merge time), making this metric nearly identical to review speed. Only meaningful for repos that use merge commits preserving original commit history.
+- **Coding time** (`median_coding_time_hours`) — time from first commit `authoredDate` to when the PR was marked ready for review. Measures pre-review development work.
+- **Review time** (`median_review_time_hours`) — time from ready for review to merged. Measures time spent in code review.
 
-Draft PRs are excluded from all metrics.
+Only PRs that were created as drafts and later marked ready for review contribute to these metrics. Non-draft PRs (which have no `ReadyForReviewEvent`) are excluded from the coding/review split but still count toward PR volume, Ona %, and other metrics.
+
+Both metrics appear in the stats analysis, HTML stat cards, and the chart when `--cycle-time` is enabled. Without the flag, no time-based speed metrics are shown.
+
+Works for all repos including those using squash-and-merge — GitHub's GraphQL API returns the original branch commits on the PR object regardless of merge strategy. For PRs with more than 50 commits, a targeted follow-up query fetches the true first commit.
+
+Draft PRs (still in draft at time of analysis) are excluded from all metrics.
 
 ## Default exclusions
 

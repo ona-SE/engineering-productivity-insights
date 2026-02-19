@@ -24,7 +24,8 @@ type PR struct {
 		Typename string `json:"__typename"`
 	} `json:"author"`
 	Commits struct {
-		Nodes []struct {
+		TotalCount int `json:"totalCount"`
+		Nodes      []struct {
 			Commit struct {
 				AuthoredDate time.Time `json:"authoredDate"`
 				Message      string    `json:"message"`
@@ -36,6 +37,11 @@ type PR struct {
 			SubmittedAt *time.Time `json:"submittedAt"`
 		} `json:"nodes"`
 	} `json:"reviews"`
+	TimelineItems struct {
+		Nodes []struct {
+			CreatedAt *time.Time `json:"createdAt"`
+		} `json:"nodes"`
+	} `json:"timelineItems"`
 }
 
 type searchResponse struct {
@@ -124,6 +130,7 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 							... on User { __typename }
 						}
 						commits(first: 50) {
+							totalCount
 							nodes {
 								commit {
 									authoredDate
@@ -134,6 +141,13 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 						reviews(first: 1) {
 							nodes {
 								submittedAt
+							}
+						}
+						timelineItems(itemTypes: READY_FOR_REVIEW_EVENT, first: 1) {
+							nodes {
+								... on ReadyForReviewEvent {
+									createdAt
+								}
 							}
 						}
 					}
@@ -175,4 +189,87 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 	}
 
 	return prs
+}
+
+// backfillFirstCommits fetches the first commit for PRs with >50 commits.
+// This ensures accurate cycle time even for large PRs where commits(first:50)
+// may not include the earliest commit.
+func backfillFirstCommits(cfg config, prs []PR) {
+	// Find PRs that need backfill
+	type backfillItem struct {
+		index int
+		number int
+	}
+	var items []backfillItem
+	for i, pr := range prs {
+		if pr.Commits.TotalCount > 50 {
+			items = append(items, backfillItem{index: i, number: pr.Number})
+		}
+	}
+	if len(items) == 0 {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Backfilling first commit for %d PRs with >50 commits...\n", len(items))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, maxConcurrency)
+
+	for _, item := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(it backfillItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			query := fmt.Sprintf(`{
+				repository(owner: %q, name: %q) {
+					pullRequest(number: %d) {
+						commits(first: 1) {
+							nodes {
+								commit {
+									authoredDate
+									message
+								}
+							}
+						}
+					}
+				}
+			}`, cfg.owner, cfg.repo, it.number)
+
+			resp, err := graphqlQuery(cfg.token, query)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  WARNING: Failed to backfill commits for PR #%d: %v\n", it.number, err)
+				return
+			}
+
+			var result struct {
+				Repository struct {
+					PullRequest struct {
+						Commits struct {
+							Nodes []struct {
+								Commit struct {
+									AuthoredDate time.Time `json:"authoredDate"`
+									Message      string    `json:"message"`
+								} `json:"commit"`
+							} `json:"nodes"`
+						} `json:"commits"`
+					} `json:"pullRequest"`
+				} `json:"repository"`
+			}
+			if err := json.Unmarshal(resp.Data, &result); err != nil {
+				fmt.Fprintf(os.Stderr, "  WARNING: Failed to parse backfill response for PR #%d: %v\n", it.number, err)
+				return
+			}
+
+			nodes := result.Repository.PullRequest.Commits.Nodes
+			if len(nodes) > 0 {
+				// Prepend the true first commit so the earliest-date scan in
+				// metrics.go picks it up even if it wasn't in the original 50.
+				prs[it.index].Commits.Nodes = append(nodes, prs[it.index].Commits.Nodes...)
+			}
+		}(item)
+	}
+
+	wg.Wait()
 }

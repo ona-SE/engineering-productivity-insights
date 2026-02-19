@@ -68,7 +68,7 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 
 		var totalPRs int
 		var totalBuildRuns int
-		var prsPerEngVals, reviewSpeedVals, onaVals, revertPctVals, buildSuccessVals []float64
+		var prsPerEngVals, codingTimeVals, reviewTimeVals, onaVals, revertPctVals, buildSuccessVals []float64
 
 		for _, wi := range g.weeks {
 			ws := stats[wi]
@@ -80,8 +80,11 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 				onaVals = append(onaVals, ws.pctOnaInvolved)
 				revertPctVals = append(revertPctVals, ws.pctReverts)
 			}
-			if ws.medianReviewSpeed >= 0 && ws.prsMerged > 0 {
-				reviewSpeedVals = append(reviewSpeedVals, ws.medianReviewSpeed)
+			if ws.medianCodingTime >= 0 && ws.prsMerged > 0 {
+				codingTimeVals = append(codingTimeVals, ws.medianCodingTime)
+			}
+			if ws.medianReviewTime >= 0 && ws.prsMerged > 0 {
+				reviewTimeVals = append(reviewTimeVals, ws.medianReviewTime)
 			}
 			if ws.buildRuns > 0 {
 				buildSuccessVals = append(buildSuccessVals, ws.buildSuccessPct)
@@ -105,25 +108,30 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 
 		medianAuthors := medianFloat(authorCountVals)
 		medianPrsPerEng := medianFloat(prsPerEngVals)
-		medianReviewSpeed := medianFloat(reviewSpeedVals)
 		medianOna := medianFloat(onaVals)
 		medianRevertPct := medianFloat(revertPctVals)
 
-		if len(reviewSpeedVals) == 0 {
-			medianReviewSpeed = -1
+		medianCodingTime := medianFloat(codingTimeVals)
+		if len(codingTimeVals) == 0 {
+			medianCodingTime = -1
+		}
+
+		medianReviewTime := medianFloat(reviewTimeVals)
+		if len(reviewTimeVals) == 0 {
+			medianReviewTime = -1
 		}
 
 		outRanges = append(outRanges, weekRange{start: g.start, end: g.end})
 		outStats = append(outStats, weekStats{
-			prsMerged:         totalPRs,
-			uniqueAuthors:     int(medianAuthors),
-			prsPerEngineer:    medianPrsPerEng,
-			medianReviewSpeed: medianReviewSpeed,
-			medianCycleTime:   -1, // not meaningful at monthly level
-			pctOnaInvolved:    medianOna,
-			pctReverts:        medianRevertPct,
-			buildRuns:         totalBuildRuns,
-			buildSuccessPct:   medianFloat(buildSuccessVals),
+			prsMerged:        totalPRs,
+			uniqueAuthors:    int(medianAuthors),
+			prsPerEngineer:   medianPrsPerEng,
+			medianCodingTime: medianCodingTime,
+			medianReviewTime: medianReviewTime,
+			pctOnaInvolved:   medianOna,
+			pctReverts:       medianRevertPct,
+			buildRuns:        totalBuildRuns,
+			buildSuccessPct:  medianFloat(buildSuccessVals),
 		})
 	}
 
