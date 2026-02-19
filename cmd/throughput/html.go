@@ -15,7 +15,6 @@ type htmlData struct {
 	Categories       []htmlCategory
 	ActivityLine     []htmlActivity
 	Contributors     []htmlContributor
-	IncludeCycleTime bool
 }
 
 type htmlWeek struct {
@@ -65,8 +64,8 @@ type htmlContributor struct {
 	HasOnaPRs  bool
 }
 
-func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string, topContributors []contributorStat, includeCycleTime bool) (string, error) {
-	data := htmlData{Title: title, FilterNotes: filterNotes, IncludeCycleTime: includeCycleTime}
+func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summaryRows []consolidatedRow, periodLabel string, filterNotes []string, topContributors []contributorStat) (string, error) {
+	data := htmlData{Title: title, FilterNotes: filterNotes}
 	for i, wr := range weeks {
 		s := weeklyStats[i]
 		ct := s.medianCodingTime
@@ -102,12 +101,10 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		"pct_ona_involved": {label: "Ona Involved", unit: "%", category: "Ona Uptake", invertColor: false},
 		"prs_merged":        {label: "PRs merged", unit: "", category: "activity"},
 		"unique_authors":    {label: "Unique authors", unit: "", category: "activity"},
-		"build_runs":        {label: "Builds", unit: "", category: "activity"},
-		"build_success_pct": {label: "Build success", unit: "%", category: "activity"},
-	}
-	if includeCycleTime {
-		metricCfg["median_coding_time_hours"] = metricConfig{label: "Median Time Spent Coding", unit: "hrs", category: "Cycle Time", invertColor: true}
-		metricCfg["median_review_time_hours"] = metricConfig{label: "Median Time Spent Reviewing", unit: "hrs", category: "Cycle Time", invertColor: true}
+		"build_runs":              {label: "Builds", unit: "", category: "activity"},
+		"build_success_pct":       {label: "Build success", unit: "%", category: "activity"},
+		"median_coding_time_hours": {label: "Median Time Spent Coding", unit: "hrs", category: "Cycle Time", invertColor: true},
+		"median_review_time_hours": {label: "Median Time Spent Reviewing", unit: "hrs", category: "Cycle Time", invertColor: true},
 	}
 
 	// Compute window description from the first summary row
@@ -395,7 +392,6 @@ const htmlTemplate = `<!DOCTYPE html>
         <div class="def-label def-warn">Drawbacks</div>
         <p>Title-based detection only — misses reverts with non-standard titles and may false-positive on PRs that mention "revert" without being one. Doesn't distinguish severity.</p>
       </div>
-      {{if .IncludeCycleTime}}
       <div class="metric-def-card">
         <h3>Coding Time</h3>
         <p>Time from first commit (<code>authoredDate</code>) to when the PR was marked ready for review (<code>ReadyForReviewEvent</code>). Measures pre-review development duration.</p>
@@ -412,7 +408,6 @@ const htmlTemplate = `<!DOCTYPE html>
         <div class="def-label def-warn">Drawbacks</div>
         <p>Only computed for PRs that were created as drafts. Includes time the author spends addressing feedback, not just reviewer wait time. Doesn't distinguish between active review and idle waiting.</p>
       </div>
-      {{end}}
       <div class="metric-def-card">
         <h3>PRs Merged</h3>
         <p>Total number of merged (non-draft, non-bot) pull requests per period. Raw volume metric.</p>
@@ -498,7 +493,7 @@ new Chart(document.getElementById("chart"), {
         pointRadius: 4,
         pointHoverRadius: 6
       },
-      {{if .IncludeCycleTime}}{
+      {
         label: "Time Spent Coding (hrs)",
         data: weeks.map(w => w.codingTime),
         borderColor: "#0891b2",
@@ -520,7 +515,7 @@ new Chart(document.getElementById("chart"), {
         pointRadius: 4,
         pointHoverRadius: 6,
         hidden: true
-      },{{end}}
+      },
       {
         label: "PRs Merged",
         data: weeks.map(w => w.prsMerged),

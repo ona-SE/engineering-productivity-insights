@@ -29,7 +29,6 @@ go run ./cmd/throughput/ [flags]
 | `--weeks` | `12` | Number of weeks to analyze |
 | `--output` | stdout | Write CSV to a file instead of stdout |
 | `--exclude` | — | Additional usernames to exclude (comma-separated) |
-| `--stats-output` | — | Write statistical analysis CSV to a file |
 | `--html` | — | Write interactive HTML chart to a file |
 | `--serve` | `false` | Start a local server to view the chart (implies `--html chart.html`) |
 | `--port` | `8080` | Port for the local server (used with `--serve`) |
@@ -39,7 +38,6 @@ go run ./cmd/throughput/ [flags]
 | `--compare-window-pct` | `5` | Compare first/last N% of periods (1-49) |
 | `--compare-ona-threshold` | `0` | Compare periods below vs above N% Ona usage (e.g. 70) |
 | `--top-contributors` | `0` | Show top N contributors with before/after Ona PR rates in HTML (0 = disabled) |
-| `--cycle-time` | `false` | Show coding time (first commit → ready for review) and review time (ready for review → merged) in stats, chart, and stat cards |
 
 `--compare-window-pct` and `--compare-ona-threshold` are mutually exclusive.
 
@@ -57,9 +55,9 @@ go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --
 # Exclude bottom 25% of contributors by PR count
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --exclude-bottom-contributor-pct 25 --serve
 
-# CSV + HTML + stats all at once
+# CSV + HTML all at once
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 26 \
-  --output report.csv --html chart.html --stats-output stats.csv
+  --output report.csv --html chart.html
 
 # Monthly aggregation for smoother trends
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --min-prs 10 --granularity monthly --serve
@@ -69,9 +67,6 @@ go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --top-contribut
 
 # Exclude additional users
 go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --exclude "staging-bot,test-user"
-
-# Show coding time and review time breakdown in stats and chart
-go run ./cmd/throughput/ --repo gitpod-io/gitpod-next --weeks 52 --cycle-time --serve
 ```
 
 ### Building a binary (optional)
@@ -132,14 +127,14 @@ The CSV contains one row per week with these columns:
 
 ### Cycle time metrics
 
-When `--cycle-time` is enabled, the tool splits the development cycle into two phases using the `ReadyForReviewEvent` from the GitHub GraphQL API:
+The tool splits the development cycle into two phases using the `ReadyForReviewEvent` from the GitHub GraphQL API:
 
 - **Coding time** (`median_coding_time_hours`) — time from first commit `authoredDate` to when the PR was marked ready for review. Measures pre-review development work.
 - **Review time** (`median_review_time_hours`) — time from ready for review to merged. Measures time spent in code review.
 
 Only PRs that were created as drafts and later marked ready for review contribute to these metrics. Non-draft PRs (which have no `ReadyForReviewEvent`) are excluded from the coding/review split but still count toward PR volume, Ona %, and other metrics.
 
-Both metrics appear in the stats analysis, HTML stat cards, and the chart when `--cycle-time` is enabled. Without the flag, no time-based speed metrics are shown.
+Both metrics appear in the stats analysis, HTML stat cards, and the chart.
 
 Works for all repos including those using squash-and-merge — GitHub's GraphQL API returns the original branch commits on the PR object regardless of merge strategy. For PRs with more than 50 commits, a targeted follow-up query fetches the true first commit.
 

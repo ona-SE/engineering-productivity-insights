@@ -28,7 +28,6 @@ func main() {
 	weeks := flag.Int("weeks", 12, "number of weeks to analyze")
 	output := flag.String("output", "", "output CSV file (default: stdout)")
 	exclude := flag.String("exclude", "", "additional usernames to exclude (comma-separated)")
-	statsOutput := flag.String("stats-output", "", "output CSV file for statistical analysis (optional)")
 	htmlOutput := flag.String("html", "", "output HTML file with interactive chart (optional)")
 	serve := flag.Bool("serve", false, "start a local server to view the HTML chart (implies --html)")
 	servePort := flag.Int("port", 8080, "port for the local server (used with --serve)")
@@ -38,7 +37,6 @@ func main() {
 	compareWindowPct := flag.Int("compare-window-pct", 5, "compare first/last N% of weeks (1-49, default 5)")
 	compareOnaThreshold := flag.Float64("compare-ona-threshold", 0, "compare weeks below vs above N% Ona usage (e.g. 70)")
 	topN := flag.Int("top-contributors", 0, "show top N contributors with before/after Ona PR rates in HTML (0 = disabled)")
-	cycleTime := flag.Bool("cycle-time", false, "include commit-to-merge cycle time in stats, chart, and stat cards")
 	flag.Parse()
 
 	if *granularity != "weekly" && *granularity != "monthly" {
@@ -105,10 +103,8 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Fetching merged PRs via GraphQL...\n")
 	allPRs := fetchAllPRs(cfg, weekRanges)
 
-	// Backfill first commit for large PRs when cycle time is enabled
-	if *cycleTime {
-		backfillFirstCommits(cfg, allPRs)
-	}
+	// Backfill first commit for large PRs (needed for cycle time metrics)
+	backfillFirstCommits(cfg, allPRs)
 
 	// Filter and compute metrics
 	fmt.Fprintf(os.Stderr, "Processing PRs...\n")
@@ -288,24 +284,13 @@ func main() {
 	filterNotes = append(filterNotes, "Excluded bot-authored PRs")
 	filterNotes = append(filterNotes, "Excluded draft PRs")
 
-	// Statistical analysis (always compute if we have enough data, for HTML summary)
-	fmt.Fprintf(os.Stderr, "Computing statistical analysis...\n")
+	// Compute before/after aggregation for HTML summary stat cards
+	fmt.Fprintf(os.Stderr, "Computing aggregation stats...\n")
 	periodLabel := "week"
 	if *granularity == "monthly" {
 		periodLabel = "month"
 	}
-	statsCSV, statsRows := generateStats(chartStats, *compareWindowPct, *compareOnaThreshold, periodLabel, *cycleTime)
-
-	if *statsOutput != "" {
-		if statsCSV != "" {
-			if err := os.WriteFile(*statsOutput, []byte(statsCSV), 0644); err != nil {
-				fatal("Failed to write stats output: %v", err)
-			}
-			fmt.Fprintf(os.Stderr, "Stats CSV written to %s\n", *statsOutput)
-		} else {
-			fmt.Fprintf(os.Stderr, "No stats generated (insufficient data).\n")
-		}
-	}
+	statsRows := generateStats(chartStats, *compareWindowPct, *compareOnaThreshold, periodLabel)
 
 	// Compute top N contributors before/after Ona (optional)
 	var topContributors []contributorStat
@@ -321,7 +306,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Generating HTML chart...\n")
 		period := *granularity
 		title := fmt.Sprintf("%s/%s — %s to %s (%s)", cfg.owner, cfg.repo, startDate, today, period)
-		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel, filterNotes, topContributors, *cycleTime)
+		htmlContent, err := generateHTML(title, chartRanges, chartStats, statsRows, periodLabel, filterNotes, topContributors)
 		if err != nil {
 			fatal("Failed to generate HTML: %v", err)
 		}
