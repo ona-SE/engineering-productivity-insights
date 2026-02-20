@@ -1,6 +1,0 @@
-tasks:
-  - name: git-pull
-    description: Pull latest changes when the environment starts
-    triggeredBy:
-      - postEnvironmentStart
-    command: git pull --ff-only
