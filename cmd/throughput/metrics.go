@@ -24,6 +24,7 @@ type enrichedPR struct {
 	authorLogin          string
 	onaInvolved          bool
 	isRevert             bool
+	commitsByAuthor      map[string]int // GitHub login → commit count (unlinked commits excluded)
 }
 
 // filterPRs filters out bots and excluded users, computes metrics.
@@ -122,6 +123,14 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 
 		isRevert := revertRe.MatchString(pr.Title)
 
+		// Per-author commit counting: attribute commits to their actual author.
+		commitsByAuthor := make(map[string]int)
+		for _, cn := range pr.Commits.Nodes {
+			if cn.Commit.Author.User != nil && cn.Commit.Author.User.Login != "" {
+				commitsByAuthor[strings.ToLower(cn.Commit.Author.User.Login)]++
+			}
+		}
+
 		result = append(result, enrichedPR{
 			mergedEpoch:      mergedEpoch,
 			codingTimeHours:  codingHours,
@@ -134,6 +143,7 @@ func filterPRs(prs []PR, excludeSet map[string]bool) []enrichedPR {
 			authorLogin:      login,
 			onaInvolved:      onaInvolved,
 			isRevert:         isRevert,
+			commitsByAuthor:  commitsByAuthor,
 		})
 	}
 

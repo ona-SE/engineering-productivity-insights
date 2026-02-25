@@ -30,6 +30,17 @@ type graphqlError struct {
 	Type    string `json:"type"`
 }
 
+const maxRetries = 6
+
+// retryDelay returns an exponential backoff duration: 2s, 4s, 8s, 16s, 32s, 64s.
+func retryDelay(attempt int) time.Duration {
+	d := time.Duration(1<<uint(attempt)) * time.Second
+	if d > 64*time.Second {
+		d = 64 * time.Second
+	}
+	return d
+}
+
 // graphqlQuery executes a GraphQL query with retry and rate-limit handling.
 func graphqlQuery(token, query string) (*graphqlResponse, error) {
 	reqBody := graphqlRequest{Query: query}
@@ -39,7 +50,7 @@ func graphqlQuery(token, query string) (*graphqlResponse, error) {
 	}
 
 	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
 		req, err := http.NewRequest("POST", graphqlEndpoint, bytes.NewReader(bodyBytes))
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
@@ -50,7 +61,9 @@ func graphqlQuery(token, query string) (*graphqlResponse, error) {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ Request failed — retrying in %s (attempt %d/%d)\n", delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
 			continue
 		}
 
@@ -58,46 +71,61 @@ func graphqlQuery(token, query string) (*graphqlResponse, error) {
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ Read failed — retrying in %s (attempt %d/%d)\n", delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
 			continue
 		}
 
 		// Retry on server errors (502, 503, etc.)
 		if resp.StatusCode >= 500 {
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data[:min(200, len(data))]))
-			fmt.Fprintf(os.Stderr, "  Retrying (attempt %d/3): %v\n", attempt, lastErr)
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			lastErr = fmt.Errorf("HTTP %d (%s)", resp.StatusCode, http.StatusText(resp.StatusCode))
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ %v — retrying in %s (attempt %d/%d)\n", lastErr, delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
+			continue
+		}
+
+		// Retry on 429 Too Many Requests
+		if resp.StatusCode == 429 {
+			lastErr = fmt.Errorf("HTTP 429 (Too Many Requests)")
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ Rate limited (HTTP 429) — retrying in %s (attempt %d/%d)\n", delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
 			continue
 		}
 
 		var gqlResp graphqlResponse
 		if err := json.Unmarshal(data, &gqlResp); err != nil {
-			lastErr = fmt.Errorf("unmarshal response: %w (body: %s)", err, string(data[:min(200, len(data))]))
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			lastErr = fmt.Errorf("invalid JSON response (HTTP %d)", resp.StatusCode)
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ %v — retrying in %s (attempt %d/%d)\n", lastErr, delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
 			continue
 		}
 
 		// Check for rate limiting
 		if len(gqlResp.Errors) > 0 && gqlResp.Errors[0].Type == "RATE_LIMITED" {
-			fmt.Fprintf(os.Stderr, "  Rate limited, waiting 60s (attempt %d)...\n", attempt)
-			time.Sleep(60 * time.Second)
 			lastErr = fmt.Errorf("rate limited")
+			fmt.Fprintf(os.Stderr, "  ⚠ GraphQL rate limited — waiting 60s (attempt %d/%d)\n", attempt, maxRetries)
+			time.Sleep(60 * time.Second)
 			continue
 		}
 
 		// Retry when data is null/empty (server-side timeout or partial failure)
 		if len(gqlResp.Data) == 0 || string(gqlResp.Data) == "null" {
-			errMsg := "null data"
+			errMsg := "empty response"
 			if len(gqlResp.Errors) > 0 {
 				errMsg = gqlResp.Errors[0].Message
 			}
-			lastErr = fmt.Errorf("empty response data: %s", errMsg)
-			fmt.Fprintf(os.Stderr, "  Retrying (attempt %d/3): %v\n", attempt, lastErr)
-			time.Sleep(time.Duration(attempt*5) * time.Second)
+			lastErr = fmt.Errorf("%s", errMsg)
+			delay := retryDelay(attempt)
+			fmt.Fprintf(os.Stderr, "  ⚠ %v — retrying in %s (attempt %d/%d)\n", lastErr, delay.Round(time.Second), attempt, maxRetries)
+			time.Sleep(delay)
 			continue
 		}
 
 		return &gqlResp, nil
 	}
-	return nil, fmt.Errorf("graphql query failed after 3 attempts: %v", lastErr)
+	return nil, fmt.Errorf("graphql query failed after %d attempts: %v", maxRetries, lastErr)
 }

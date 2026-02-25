@@ -29,6 +29,11 @@ type PR struct {
 			Commit struct {
 				AuthoredDate time.Time `json:"authoredDate"`
 				Message      string    `json:"message"`
+				Author       struct {
+					User *struct {
+						Login string `json:"login"`
+					} `json:"user"`
+				} `json:"author"`
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
@@ -135,6 +140,7 @@ func fetchWeekPRs(cfg config, wr weekRange) []PR {
 								commit {
 									authoredDate
 									message
+									author { user { login } }
 								}
 							}
 						}
@@ -230,6 +236,7 @@ func backfillFirstCommits(cfg config, prs []PR) {
 								commit {
 									authoredDate
 									message
+									author { user { login } }
 								}
 							}
 						}
@@ -251,6 +258,11 @@ func backfillFirstCommits(cfg config, prs []PR) {
 								Commit struct {
 									AuthoredDate time.Time `json:"authoredDate"`
 									Message      string    `json:"message"`
+									Author       struct {
+										User *struct {
+											Login string `json:"login"`
+										} `json:"user"`
+									} `json:"author"`
 								} `json:"commit"`
 							} `json:"nodes"`
 						} `json:"commits"`

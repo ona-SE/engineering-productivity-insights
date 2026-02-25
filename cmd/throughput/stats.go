@@ -33,6 +33,11 @@ var allMetrics = []metricDef{
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
 	},
 	{
+		name:    "commits_per_engineer",
+		extract: func(ws weekStats) float64 { return ws.commitsPerEngineer },
+		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
+	},
+	{
 		name:    "pct_reverts",
 		extract: func(ws weekStats) float64 { return ws.pctReverts },
 		valid:   func(ws weekStats) bool { return ws.prsMerged > 0 },
