@@ -109,7 +109,7 @@ func openGitpodPort(port int) {
 
 	url := strings.TrimSpace(string(out))
 	if url != "" {
-		fmt.Fprintf(os.Stderr, "\nPublic URL: %s\n\n", url)
+		fmt.Fprintf(os.Stderr, "\n  Open in browser: %s\n\n", url)
 	}
 }
 

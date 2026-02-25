@@ -6,13 +6,16 @@ import (
 	"time"
 )
 
-const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,total_additions,total_deletions,total_files_changed,median_coding_time_hours,p90_coding_time_hours,median_review_time_hours,p90_review_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
+const csvHeader = "week_start,week_end,prs_merged,unique_authors,prs_per_engineer,commits_per_engineer,total_additions,total_deletions,total_files_changed,median_coding_time_hours,p90_coding_time_hours,median_review_time_hours,p90_review_time_hours,median_review_turnaround_hours,p90_review_turnaround_hours,avg_pr_size_lines,pct_ona_involved,revert_count,pct_reverts"
 
 // weekStats holds the computed per-week values needed by the stats analysis.
 type weekStats struct {
 	prsMerged            int
 	uniqueAuthors        int
 	prsPerEngineer       float64
+	totalCommits         int
+	uniqueCommitAuthors  int
+	commitsPerEngineer   float64
 	medianCodingTime     float64 // first commit to ready-for-review; -1 if no data
 	medianReviewTime     float64 // ready-for-review to merged; -1 if no data
 	pctOnaInvolved       float64
@@ -50,10 +53,12 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 		reviewTimes      []float64 // ready-for-review to merged
 		turnaroundTimes  []float64 // PR created to first review
 		authors          map[string]bool
+		commitsByAuthor  map[string]int // GitHub login → commit count across all PRs
 	}
 	buckets := make([]weekBucket, len(weeks))
 	for i := range buckets {
 		buckets[i].authors = make(map[string]bool)
+		buckets[i].commitsByAuthor = make(map[string]int)
 	}
 
 	for _, pr := range prs {
@@ -64,6 +69,9 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 				buckets[i].deletions += pr.deletions
 				buckets[i].files += pr.changedFiles
 				buckets[i].authors[pr.authorLogin] = true
+				for login, count := range pr.commitsByAuthor {
+					buckets[i].commitsByAuthor[login] += count
+				}
 				if pr.onaInvolved {
 					buckets[i].onaCount++
 				}
@@ -102,6 +110,16 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 			prsPerEng = float64(b.count) / float64(uniqueAuthors)
 		}
 
+		var totalCommits int
+		for _, c := range b.commitsByAuthor {
+			totalCommits += c
+		}
+		uniqueCommitAuthors := len(b.commitsByAuthor)
+		var commitsPerEng float64
+		if uniqueCommitAuthors > 0 {
+			commitsPerEng = float64(totalCommits) / float64(uniqueCommitAuthors)
+		}
+
 		medCoding := formatPercentile(median(b.codingTimes))
 		p90Coding := formatPercentile(p90(b.codingTimes))
 		medReviewTime := formatPercentile(median(b.reviewTimes))
@@ -120,21 +138,24 @@ func aggregateCSV(prs []enrichedPR, weeks []weekRange) (string, []weekStats) {
 			avgSize = "0.00"
 		}
 
-		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
-			ws, we, b.count, uniqueAuthors, prsPerEng,
+		fmt.Fprintf(&sb, "%s,%s,%d,%d,%.2f,%.2f,%d,%d,%d,%s,%s,%s,%s,%s,%s,%s,%.1f,%d,%.1f\n",
+			ws, we, b.count, uniqueAuthors, prsPerEng, commitsPerEng,
 			b.additions, b.deletions, b.files,
 			medCoding, p90Coding, medReviewTime, p90ReviewTime,
 			medTurnaround, p90Turnaround, avgSize, pctOna,
 			b.revertCount, pctReverts)
 
 		allStats[i] = weekStats{
-			prsMerged:         b.count,
-			uniqueAuthors:     uniqueAuthors,
-			prsPerEngineer:    prsPerEng,
-			medianCodingTime:  median(b.codingTimes),
-			medianReviewTime:  median(b.reviewTimes),
-			pctOnaInvolved:    pctOna,
-			pctReverts:        pctReverts,
+			prsMerged:           b.count,
+			uniqueAuthors:       uniqueAuthors,
+			prsPerEngineer:      prsPerEng,
+			totalCommits:        totalCommits,
+			uniqueCommitAuthors: uniqueCommitAuthors,
+			commitsPerEngineer:  commitsPerEng,
+			medianCodingTime:    median(b.codingTimes),
+			medianReviewTime:    median(b.reviewTimes),
+			pctOnaInvolved:      pctOna,
+			pctReverts:          pctReverts,
 		}
 	}
 

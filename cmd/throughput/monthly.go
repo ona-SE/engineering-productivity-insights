@@ -68,12 +68,15 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 
 		var totalPRs int
 		var totalBuildRuns int
+		var totalCommits, totalCommitAuthors int
 		var prsPerEngVals, codingTimeVals, reviewTimeVals, onaVals, revertPctVals, buildSuccessVals []float64
 
 		for _, wi := range g.weeks {
 			ws := stats[wi]
 			totalPRs += ws.prsMerged
 			totalBuildRuns += ws.buildRuns
+			totalCommits += ws.totalCommits
+			totalCommitAuthors += ws.uniqueCommitAuthors
 
 			if ws.prsMerged > 0 {
 				prsPerEngVals = append(prsPerEngVals, ws.prsPerEngineer)
@@ -111,6 +114,11 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 		medianOna := medianFloat(onaVals)
 		medianRevertPct := medianFloat(revertPctVals)
 
+		var commitsPerEng float64
+		if totalCommitAuthors > 0 {
+			commitsPerEng = float64(totalCommits) / float64(totalCommitAuthors)
+		}
+
 		medianCodingTime := medianFloat(codingTimeVals)
 		if len(codingTimeVals) == 0 {
 			medianCodingTime = -1
@@ -123,15 +131,18 @@ func aggregateMonthly(weeks []weekRange, stats []weekStats) ([]weekRange, []week
 
 		outRanges = append(outRanges, weekRange{start: g.start, end: g.end})
 		outStats = append(outStats, weekStats{
-			prsMerged:        totalPRs,
-			uniqueAuthors:    int(medianAuthors),
-			prsPerEngineer:   medianPrsPerEng,
-			medianCodingTime: medianCodingTime,
-			medianReviewTime: medianReviewTime,
-			pctOnaInvolved:   medianOna,
-			pctReverts:       medianRevertPct,
-			buildRuns:        totalBuildRuns,
-			buildSuccessPct:  medianFloat(buildSuccessVals),
+			prsMerged:           totalPRs,
+			uniqueAuthors:       int(medianAuthors),
+			prsPerEngineer:      medianPrsPerEng,
+			totalCommits:        totalCommits,
+			uniqueCommitAuthors: totalCommitAuthors,
+			commitsPerEngineer:  commitsPerEng,
+			medianCodingTime:    medianCodingTime,
+			medianReviewTime:    medianReviewTime,
+			pctOnaInvolved:      medianOna,
+			pctReverts:          medianRevertPct,
+			buildRuns:           totalBuildRuns,
+			buildSuccessPct:     medianFloat(buildSuccessVals),
 		})
 	}
 

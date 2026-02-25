@@ -18,14 +18,15 @@ type htmlData struct {
 }
 
 type htmlWeek struct {
-	WeekStart        string
-	PRsMerged        int
-	PRsPerEngineer   float64
-	MedianCodingTime float64
-	MedianReviewTime float64
-	PctOnaInvolved   float64
-	PctReverts       float64
-	BuildRuns        int
+	WeekStart           string
+	PRsMerged           int
+	PRsPerEngineer      float64
+	CommitsPerEngineer  float64
+	MedianCodingTime    float64
+	MedianReviewTime    float64
+	PctOnaInvolved      float64
+	PctReverts          float64
+	BuildRuns           int
 }
 
 type htmlCategory struct {
@@ -77,14 +78,15 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 			rt = 0
 		}
 		data.Weeks = append(data.Weeks, htmlWeek{
-			WeekStart:        wr.start.Format("2006-01-02"),
-			PRsMerged:        s.prsMerged,
-			PRsPerEngineer:   s.prsPerEngineer,
-			MedianCodingTime: ct,
-			MedianReviewTime: rt,
-			PctOnaInvolved:   s.pctOnaInvolved,
-			PctReverts:       s.pctReverts,
-			BuildRuns:        s.buildRuns,
+			WeekStart:          wr.start.Format("2006-01-02"),
+			PRsMerged:          s.prsMerged,
+			PRsPerEngineer:     s.prsPerEngineer,
+			CommitsPerEngineer: s.commitsPerEngineer,
+			MedianCodingTime:   ct,
+			MedianReviewTime:   rt,
+			PctOnaInvolved:     s.pctOnaInvolved,
+			PctReverts:         s.pctReverts,
+			BuildRuns:          s.buildRuns,
 		})
 	}
 
@@ -96,12 +98,13 @@ func generateHTML(title string, weeks []weekRange, weeklyStats []weekStats, summ
 		invertColor bool   // true = lower is better
 	}
 	metricCfg := map[string]metricConfig{
-		"prs_per_engineer": {label: "Median PRs / Engineer", unit: "", category: "Speed", invertColor: false},
+		"prs_per_engineer":    {label: "Median PRs / Engineer / " + periodLabel, unit: "", category: "Speed", invertColor: false},
+		"commits_per_engineer": {label: "Median Commits / Engineer / " + periodLabel, unit: "", category: "Speed", invertColor: false},
 		"pct_reverts":      {label: "Reverts", unit: "%", category: "Quality", invertColor: true},
 		"pct_ona_involved": {label: "Ona Involved", unit: "%", category: "Ona Uptake", invertColor: false},
-		"prs_merged":        {label: "PRs merged", unit: "", category: "activity"},
-		"unique_authors":    {label: "Unique authors", unit: "", category: "activity"},
-		"build_runs":              {label: "Builds", unit: "", category: "activity"},
+		"prs_merged":        {label: "PRs merged / " + periodLabel, unit: "", category: "activity"},
+		"unique_authors":    {label: "Unique authors / " + periodLabel, unit: "", category: "activity"},
+		"build_runs":              {label: "Builds / " + periodLabel, unit: "", category: "activity"},
 		"build_success_pct":       {label: "Build success", unit: "%", category: "activity"},
 		"median_coding_time_hours": {label: "Median Time Spent Coding", unit: "hrs", category: "Cycle Time", invertColor: true},
 		"median_review_time_hours": {label: "Median Time Spent Reviewing", unit: "hrs", category: "Cycle Time", invertColor: true},
@@ -377,6 +380,14 @@ const htmlTemplate = `<!DOCTYPE html>
         <p>Doesn't account for PR size or complexity. A week of small refactors scores the same as a week of large features. Infrequent contributors (1 PR) inflate the denominator.</p>
       </div>
       <div class="metric-def-card">
+        <h3>Commits per Engineer</h3>
+        <p>Total commits (with a resolved GitHub author) across all merged PRs, divided by unique commit authors in the period. Attributes commits to their actual author, not the PR opener.</p>
+        <div class="def-label def-good">Benefits</div>
+        <p>Captures per-author work granularity that PRs/engineer misses. Engineers who contribute commits to others' PRs are counted. Useful alongside PRs/engineer to understand collaboration and PR sizing patterns.</p>
+        <div class="def-label def-warn">Drawbacks</div>
+        <p>Capped at 50 commits per PR — large PRs may undercount. Commits without a linked GitHub account are excluded. Inflated by fixup commits or CI-triggered commits. Uses PR branch commit count from GitHub's API, not the squashed merge commit.</p>
+      </div>
+      <div class="metric-def-card">
         <h3>% Ona Involved</h3>
         <p>Percentage of PRs where Ona was a co-author (via <code>Co-authored-by</code> trailer) or the primary author (login prefix <code>ona-</code>).</p>
         <div class="def-label def-good">Benefits</div>
@@ -424,6 +435,7 @@ const weeks = [{{range $i, $w := .Weeks}}{{if $i}},{{end}}{
   week: "{{$w.WeekStart}}",
   prsMerged: {{$w.PRsMerged}},
   prsPerEngineer: {{$w.PRsPerEngineer}},
+  commitsPerEngineer: {{$w.CommitsPerEngineer}},
   codingTime: {{$w.MedianCodingTime}},
   reviewTime: {{$w.MedianReviewTime}},
   pctOna: {{$w.PctOnaInvolved}},
@@ -470,6 +482,17 @@ new Chart(document.getElementById("chart"), {
         pointRadius: 0,
         pointHoverRadius: 0,
         tension: 0
+      },
+      {
+        label: "Commits per Engineer",
+        data: weeks.map(w => w.commitsPerEngineer),
+        borderColor: "#d946ef",
+        backgroundColor: "rgba(217,70,239,0.1)",
+        yAxisID: "yPPE",
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        hidden: true
       },
       {
         label: "% Ona Involved",
